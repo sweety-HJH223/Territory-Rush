@@ -176,6 +176,15 @@ function startMatch(room) {
   sendSnapshot(room);
 }
 
+// Emotes are indexes into the client's list: 0 GG, 1 laugh, 2 "Catch me!", 3 "Oops".
+const EMOTE_COUNT = 4;
+function botEmote(room, emote, now) {
+  const bot = room.game?.players.find((p) => p.bot);
+  if (!bot || now - (room.botLastEmoteAt || 0) < 2500) return;
+  room.botLastEmoteAt = now;
+  broadcast(room, "emote", { playerId: bot.id, emote });
+}
+
 const pickDifficulty = (value) => (Object.hasOwn(DIFFICULTIES, value) ? value : "normal");
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -312,6 +321,15 @@ function handleMessage(socket, message) {
     else broadcast(room, "rematch-pending", { playerId: player.id, message: "A player wants a rematch." });
     return;
   }
+  if (message.type === "emote" && room.status === "playing") {
+    const emote = Number(message.emote);
+    if (!Number.isInteger(emote) || emote < 0 || emote >= EMOTE_COUNT) return;
+    const now = Date.now();
+    if (now - (player.lastEmoteAt || 0) < 1000) return;
+    player.lastEmoteAt = now;
+    broadcast(room, "emote", { playerId: player.id, emote });
+    return;
+  }
   if (message.type === "input" && room.status === "playing" && room.game && !room.game.finished) {
     setPlayerInput(room.game, player.id, message.input);
     return;
@@ -375,9 +393,14 @@ setInterval(() => {
       if (room.botEnabled) updateBotInput(room.game, now);
       tickGame(room.game, now);
       if (room.dailyChallenge) recordDailyFrame(room, now);
+      if (room.botEnabled) {
+        const humanCut = room.game.effects.some((e) => e.type === "penalty" && !room.game.players.find((p) => p.id === e.playerId)?.bot);
+        if (humanCut && Math.random() < 0.6) botEmote(room, 1, now);
+      }
       if (room.game.finished) {
         room.status = "finished";
         saveDailyResult(room);
+        if (room.botEnabled) { room.botLastEmoteAt = 0; botEmote(room, 0, now); }
       }
       sendSnapshot(room);
     } catch (error) {

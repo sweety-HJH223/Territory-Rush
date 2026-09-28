@@ -11,7 +11,7 @@ Territory Rush is a fast, browser-based territory-control game. Leave your color
 - Move with **WASD** or the **arrow keys**.
 - Leave your colored territory to draw a trail.
 - Return to your territory to close the loop and claim the enclosed area.
-- Your exposed trail can be cut by your rival. A cut costs you **12% of your territory** and sends you back to base. A Shield blocks one hit.
+- Your exposed trail can be cut by your rival. A cut costs you **12% of your territory** (8% on Easy, 18% on Hard) and sends you back to base. A Shield blocks one hit.
 - Collect items by moving over them. Their effects are shown in the in-game field guide.
 - Matches last **3 minutes**. The player with the higher final score wins.
 
@@ -35,6 +35,8 @@ The Crown activates with **1:30 remaining** and moves at **0:45**. It always app
 - **Create Room:** Host a private match and share the room code with a friend.
 - **Join Room:** Enter a friend’s five-character room code.
 - **Play vs Bot:** Challenge the Rush Bot solo.
+- **Emotes:** Press **1–4** during a match (or click the buttons under the arena) to pop a GG, 😂, "Catch me!" or "Oops" bubble over your character. Rush Bot taunts back when it cuts you.
+- **Share result:** The results screen can save an image of your score, stats, and the final board (on desktop it is also copied to the clipboard; on phones it opens the share sheet).
 - **Difficulty (Easy / Normal / Hard):** Pick it before creating a room or playing the bot; the room host can change it in the lobby. Harder settings mean faster movement, a bigger loss when your trail is cut, and more land stolen per capture. Against the bot, it also sets how aggressive the Rush Bot plays. The Daily Challenge always uses Normal.
 - **Daily Challenge:** Compete on the same daily seed and compare scores on the leaderboard.
 

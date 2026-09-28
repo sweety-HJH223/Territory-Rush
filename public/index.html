@@ -88,7 +88,7 @@
           <div id="countdownOverlay" class="count-overlay hidden"><strong id="countdownNumber">3</strong><span>GET READY</span></div>
           <div id="finishBanner" class="finish-banner hidden"><strong>VICTORY</strong><span></span></div>
           <div id="replayOverlay" class="replay-overlay hidden"><span class="label">AFTER ACTION</span><strong id="replayTitle">Biggest Capture</strong><button id="skipReplay" class="button quiet">Skip</button></div>
-          <div id="resultOverlay" class="result-overlay hidden"><div class="result-card"><span class="label">MATCH COMPLETE</span><h2 id="resultTitle">You win!</h2><p id="resultText"></p><div id="resultStats" class="result-stats"></div><div class="result-actions"><button id="rematchButton" class="button primary">Rematch</button><button id="backButton" class="button quiet">Back to lobby</button></div></div></div>
+          <div id="resultOverlay" class="result-overlay hidden"><div class="result-card"><span class="label">MATCH COMPLETE</span><h2 id="resultTitle">You win!</h2><p id="resultText"></p><div id="resultStats" class="result-stats"></div><div class="result-actions"><button id="rematchButton" class="button primary">Rematch</button><button id="shareButton" class="button secondary share-button">📸 Share result</button><button id="backButton" class="button quiet">Back to lobby</button></div></div></div>
         </div>
         <section class="guide-panel" aria-label="Power-up and trail guide">
           <div class="guide-heading"><div><span class="eyebrow">FIELD GUIDE</span><h2>Claim territory. Outplay your rival.</h2></div><span class="guide-note">Walk over a pickup to collect it.</span></div>
@@ -99,11 +99,11 @@
             <div class="power-guide freeze-guide"><span class="power-symbol">❄</span><span><b>Trail-Freeze</b><small>Stops the rival from drawing a trail for 3 seconds</small></span></div>
             <div class="power-guide bonus-guide"><span class="power-symbol">+</span><span><b>Territory Bonus</b><small>Claims up to 9 nearby unclaimed tiles</small></span></div>
           </div>
-          <div class="trail-warning"><span class="warning-mark">!</span><span><b>Trail danger:</b> outside your color, your trail is exposed. If your rival touches it, you lose 12% of your territory and respawn at base. A Shield blocks one hit.</span></div>
-          <div class="breach-guide"><b>BREACH CAPTURE</b><span>A loop can claim up to 9% of the arena at once. If it crosses rival land, it can steal up to 6 outer cells; bases stay protected.</span></div>
+          <div class="trail-warning"><span class="warning-mark">!</span><span><b>Trail danger:</b> outside your color, your trail is exposed. If your rival touches it, you lose part of your territory (8% on Easy, 12% on Normal, 18% on Hard) and respawn at base. A Shield blocks one hit.</span></div>
+          <div class="breach-guide"><b>BREACH CAPTURE</b><span>A loop can claim up to 9% of the arena at once. If it crosses rival land, it can steal outer cells (4 on Easy, 6 on Normal, 10 on Hard); bases stay protected.</span></div>
           <div class="crown-guide"><b>THE CROWN</b><span>Activates at 1:30 and moves at 0:45, always to a spot equally far from both bases. Stand on its tile for 5 seconds to score 1 Crown point. Each point adds 4 tiles to your final score.</span></div>
         </section>
-        <div class="game-footer"><div class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>MOVE</span></div><div>Close the loop to claim. Your trail is vulnerable until you return home.</div><div id="powerStatus" class="power-status">NO ACTIVE POWER-UPS</div></div>
+        <div class="game-footer"><div class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>MOVE</span></div><div>Close the loop to claim. Your trail is vulnerable until you return home.</div><div id="powerStatus" class="power-status">NO ACTIVE POWER-UPS</div><div id="emoteBar" class="emote-bar" aria-label="Emotes"><button type="button" data-emote="0"><kbd>1</kbd>GG</button><button type="button" data-emote="1"><kbd>2</kbd>😂</button><button type="button" data-emote="2"><kbd>3</kbd>Catch me!</button><button type="button" data-emote="3"><kbd>4</kbd>Oops</button></div></div>
       </section>
       <footer class="site-footer"><span>BUILT FOR BOLD MOVES</span><span>© TERRITORY RUSH</span></footer>
     </main>

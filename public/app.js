@@ -34,7 +34,7 @@ document.addEventListener("pointerdown", enableAudio, { once: true });
 document.addEventListener("keydown", enableAudio, { once: true });
 function playSound(kind) {
   if (!audioContext || !masterGain || soundVolume <= 0) return;
-  const presets = { claim: [480, 790, .2, "sine", .16], power: [620, 980, .15, "triangle", .15], penalty: [190, 75, .32, "sawtooth", .16], move: [280, 220, .05, "sine", .035], tick: [1250, 1100, .05, "square", .05], count: [520, 520, .16, "square", .09], go: [700, 1400, .38, "sawtooth", .11] };
+  const presets = { claim: [480, 790, .2, "sine", .16], power: [620, 980, .15, "triangle", .15], penalty: [190, 75, .32, "sawtooth", .16], move: [280, 220, .05, "sine", .035], tick: [1250, 1100, .05, "square", .05], count: [520, 520, .16, "square", .09], go: [700, 1400, .38, "sawtooth", .11], emote: [880, 1320, .09, "sine", .07] };
   const [from, to, duration, wave, level] = presets[kind] || presets.power;
   const osc = audioContext.createOscillator(), envelope = audioContext.createGain(), start = audioContext.currentTime;
   osc.type = wave; osc.frequency.setValueAtTime(from, start); osc.frequency.exponentialRampToValueAtTime(to, start + duration);
@@ -118,6 +118,7 @@ function handleMessage(message) {
     else { button.disabled = false; button.textContent = "Accept rematch"; }
   }
   if (message.type === "opponent-disconnected") { showToast(message.message, "penalty"); setTimeout(() => showResult(state || {}), 1200); }
+  if (message.type === "emote" && EMOTES[message.emote]) { emoteBubbles.set(message.playerId, { text: EMOTES[message.emote], startedAt: performance.now() }); playSound("emote"); }
   if (message.type === "opponent-left") {
     opponentLeft = true; showToast(message.message, "penalty");
     $("#rematchButton").disabled = true; $("#rematchButton").textContent = "Rival left";
@@ -343,7 +344,7 @@ function updateTargets() {
       if (effect.hitCell) {
         const [hx, hy] = parseCell(effect.hitCell), size = state.map.cellSize;
         spawnBurst((hx + .5) * size, (hy + .5) * size, "#ff6e91", 26);
-        addPopup((hx + .5) * size, (hy + .5) * size - 12, "CUT! −12%", "#ff6e91", 22);
+        addPopup((hx + .5) * size, (hy + .5) * size - 12, `CUT! −${({ easy: 8, hard: 18 })[state.difficulty] ?? 12}%`, "#ff6e91", 22);
       }
       addShake(effect.playerId === localPlayerId ? 9 : 5, 380);
     }
@@ -487,12 +488,115 @@ $("#leaveButton").addEventListener("click", backToLobby);
 $("#backButton").addEventListener("click", backToLobby);
 $("#rematchButton").addEventListener("click", () => send("rematch"));
 
+function fitText(g, text, maxWidth) {
+  if (g.measureText(text).width <= maxWidth) return text;
+  const chars = Array.from(text);
+  while (chars.length > 1 && g.measureText(`${chars.join("")}…`).width > maxWidth) chars.pop();
+  return `${chars.join("")}…`;
+}
+async function buildShareImage() {
+  if (!state?.players?.length || !state.map) return null;
+  await document.fonts?.ready;
+  const W = 1200, H = 630, c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const bg = g.createLinearGradient(0, 0, W, H); bg.addColorStop(0, "#0c1420"); bg.addColorStop(1, "#161b2e");
+  g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  g.strokeStyle = "#9bc8dc0d"; g.lineWidth = 1;
+  for (let x = 0; x <= W; x += 48) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+  for (let y = 0; y <= H; y += 48) { g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+
+  const me = state.players.find((p) => p.id === localPlayerId) || state.players[0];
+  const rival = state.players.find((p) => p !== me);
+  const won = !state.draw && state.winnerId === me.id;
+  const accent = state.draw ? "#ffd45c" : won ? "#57e389" : "#ff6e91";
+  const glow = g.createRadialGradient(250, 230, 0, 250, 230, 420); glow.addColorStop(0, colorAlpha(accent, .16)); glow.addColorStop(1, colorAlpha(accent, 0));
+  g.fillStyle = glow; g.fillRect(0, 0, W, H);
+
+  const mono = (size, weight = 600) => `${weight} ${size}px "DM Mono", Consolas, monospace`;
+  const sans = (size, weight = 700) => `${weight} ${size}px "Space Grotesk", Inter, "Segoe UI", "Segoe UI Emoji", sans-serif`;
+  g.textBaseline = "alphabetic"; g.textAlign = "left";
+  g.font = mono(18); g.fillStyle = "#7effd6"; g.fillText("TERRITORY RUSH", 64, 84);
+  const mode = state.mode === "daily" ? "DAILY CHALLENGE" : `1V1 ARENA · ${String(state.difficulty || "normal").toUpperCase()}`;
+  g.font = mono(15, 500); g.fillStyle = "#8a95a8"; g.fillText(`${mode} · ${(state.theme?.name || "Arena").toUpperCase()}`, 64, 114);
+  g.save(); g.font = sans(104, 800); g.fillStyle = accent; g.shadowColor = colorAlpha(accent, .55); g.shadowBlur = 28;
+  g.fillText(state.draw ? "DRAW" : won ? "VICTORY" : "DEFEAT", 58, 236); g.restore();
+
+  [me, rival].filter(Boolean).forEach((p, i) => {
+    const y = 318 + i * 86;
+    g.fillStyle = colorAlpha(p.color, .12); roundRect(g, 64, y - 38, 472, 70, 14); g.fill();
+    g.strokeStyle = colorAlpha(p.color, .45); g.lineWidth = 1.5; g.stroke();
+    g.beginPath(); g.arc(94, y - 3, 11, 0, Math.PI * 2); g.fillStyle = p.color; g.fill();
+    g.font = sans(24, 700); g.fillStyle = "#f1f4f8"; g.fillText(fitText(g, p.name, 230), 118, y + 3);
+    if (p === me) { const w = g.measureText(fitText(g, p.name, 230)).width; g.font = mono(12); g.fillStyle = "#9fb0c4"; g.fillText("YOU", 128 + w, y + 2); }
+    g.font = mono(13, 500); g.fillStyle = "#8a95a8"; g.fillText(`${(p.territoryPercent || 0).toFixed(1)}% land · ${p.stats?.crownPoints || 0} ♛`, 118, y + 22);
+    g.textAlign = "right"; g.font = sans(30, 800); g.fillStyle = p.color; g.fillText(`${p.matchScore ?? p.territoryCells ?? 0}`, 470, y + 8);
+    g.font = mono(13); g.fillStyle = "#9fb0c4"; g.fillText("PTS", 516, y + 8); g.textAlign = "left";
+  });
+  const s = me.stats || {};
+  g.font = sans(17, 500); g.fillStyle = "#c6d0dc";
+  g.fillText(`${s.cellsClaimed || 0} cells captured  ·  cut ${s.trailCuts || 0}×  ·  ${s.powerUpsCollected || 0} pickups`, 64, 526);
+  g.font = mono(14, 500); g.fillStyle = "#6d7a8c";
+  g.fillText(`${new Date().toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}  ·  Play at ${location.host}`, 64, 578);
+
+  const { width: mw, height: mh, walls } = state.map, boxW = 536, cs = boxW / mw, boxH = cs * mh, bx = 600, by = (H - boxH) / 2 + 12;
+  g.font = mono(13); g.fillStyle = "#8a95a8"; g.fillText("FINAL BOARD", bx, by - 16);
+  g.save(); g.shadowColor = colorAlpha(accent, .35); g.shadowBlur = 30; roundRect(g, bx - 8, by - 8, boxW + 16, boxH + 16, 16); g.fillStyle = "#0a1018"; g.fill(); g.restore();
+  g.strokeStyle = colorAlpha(accent, .5); g.lineWidth = 2; roundRect(g, bx - 8, by - 8, boxW + 16, boxH + 16, 16); g.stroke();
+  g.fillStyle = "#131c28"; g.fillRect(bx, by, boxW, boxH);
+  for (const p of state.players) {
+    g.fillStyle = colorAlpha(p.color, .78);
+    for (const packed of p.territory) { const [x, y] = parseCell(packed); g.fillRect(bx + x * cs + .5, by + y * cs + .5, cs - 1, cs - 1); }
+  }
+  g.fillStyle = "#3a4a5f";
+  for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) if (walls[y][x]) g.fillRect(bx + x * cs, by + y * cs, cs, cs);
+  return new Promise((resolve) => c.toBlob(resolve, "image/png"));
+}
+function roundRect(g, x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+$("#shareButton").addEventListener("click", async () => {
+  const button = $("#shareButton"), label = "📸 Share result";
+  button.disabled = true;
+  try {
+    const blob = await buildShareImage();
+    if (!blob) return;
+    const file = new File([blob], "territory-rush-result.png", { type: "image/png" });
+    // Phones get the native share sheet; desktops download the image and also copy it for quick pasting.
+    if (matchMedia("(pointer: coarse)").matches && navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: "Territory Rush", text: "My Territory Rush result" });
+      button.textContent = "Shared ✓";
+    } else {
+      const url = URL.createObjectURL(blob), link = document.createElement("a");
+      link.href = url; link.download = file.name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+      let copied = false;
+      try { await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]); copied = true; } catch {}
+      button.textContent = copied ? "Saved & copied ✓" : "Saved ✓";
+    }
+  } catch (error) {
+    if (error?.name !== "AbortError") button.textContent = "Couldn't create image";
+  } finally {
+    button.disabled = false; setTimeout(() => { button.textContent = label; }, 2200);
+  }
+});
+
 function keyDirection(event) {
   if (event.target.closest?.("input, textarea, select, [contenteditable]")) return undefined;
   const k = event.key.toLowerCase();
   return ({ w: "up", arrowup: "up", s: "down", arrowdown: "down", a: "left", arrowleft: "left", d: "right", arrowright: "right" })[k];
 }
 function sendInput() { if (matchStarted) send("input", { input: { up: held.has("up"), down: held.has("down"), left: held.has("left"), right: held.has("right") } }); }
+const EMOTES = ["GG", "😂", "Catch me!", "Oops"], emoteBubbles = new Map();
+let lastEmoteSentAt = 0;
+function sendEmote(index) {
+  if (!matchStarted || !EMOTES[index] || performance.now() - lastEmoteSentAt < 1000) return;
+  lastEmoteSentAt = performance.now(); send("emote", { emote: index });
+}
+window.addEventListener("keydown", (event) => {
+  if (event.repeat || event.target.closest?.("input, textarea, select, [contenteditable]")) return;
+  const index = ["1", "2", "3", "4"].indexOf(event.key);
+  if (index >= 0) sendEmote(index);
+});
+$("#emoteBar").addEventListener("click", (event) => { const button = event.target.closest("button[data-emote]"); if (button) { sendEmote(Number(button.dataset.emote)); button.blur(); } });
 window.addEventListener("keydown", (event) => { const dir = keyDirection(event); if (!dir) return; event.preventDefault(); if (!held.has(dir)) { held.add(dir); playSound("move"); sendInput(); } });
 window.addEventListener("keyup", (event) => { const dir = keyDirection(event); if (!dir) return; held.delete(dir); sendInput(); });
 window.addEventListener("blur", () => { held.clear(); sendInput(); });
@@ -638,6 +742,7 @@ function draw(time = 0) {
     if (visualEffectsEnabled) drawMotionTrail(player, pos);
     drawAvatar(player, pos.x, pos.y, motionTime, cellSize);
   }
+  drawEmoteBubbles(players);
   if (state.crown?.active && state.crown.cell) {
     const { x, y } = state.crown.cell, px = (x + .5) * cellSize, py = (y + .5) * cellSize;
     const holder = players.find((player) => player.id === state.crown.ownerId);
@@ -717,6 +822,27 @@ function interpolate(id, x, y) {
   rendered.y = target.fromY + (target.y - target.fromY) * progress;
   renderPositions.set(id, rendered);
   return rendered;
+}
+function drawEmoteBubbles(players) {
+  const now = performance.now(), life = 1800;
+  for (const player of players) {
+    const bubble = emoteBubbles.get(player.id), pos = renderPositions.get(player.id);
+    if (!bubble || !pos) continue;
+    const age = now - bubble.startedAt;
+    if (age > life) { emoteBubbles.delete(player.id); continue; }
+    const pop = age < 140 ? .6 + age / 140 * .4 : 1, fade = age > life - 300 ? (life - age) / 300 : 1;
+    ctx.save(); ctx.globalAlpha = fade;
+    ctx.font = `700 14px Inter, "Segoe UI", "Segoe UI Emoji", sans-serif`;
+    const w = Math.max(34, ctx.measureText(bubble.text).width + 18), h = 26;
+    const x = Math.min(Math.max(pos.x, w / 2 + 4), canvas.width - w / 2 - 4), y = Math.max(h + 6, pos.y - 20);
+    ctx.translate(x, y); ctx.scale(pop, pop);
+    ctx.shadowColor = colorAlpha(player.color, .6); ctx.shadowBlur = 10;
+    roundedRect(-w / 2, -h, w, h, 9); ctx.fillStyle = "#0f1722f2"; ctx.fill();
+    ctx.shadowBlur = 0; ctx.strokeStyle = player.color; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-5, -.5); ctx.lineTo(0, 6); ctx.lineTo(5, -.5); ctx.closePath(); ctx.fillStyle = "#0f1722f2"; ctx.fill();
+    ctx.fillStyle = "#f4f7fa"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(bubble.text, 0, -h / 2 + .5);
+    ctx.restore();
+  }
 }
 function drawMotionTrail(player, pos) {
   const now = performance.now(), boosted = player.speedActive, life = boosted ? 360 : 200, history = motionTrails.get(player.id) || [];
