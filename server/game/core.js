@@ -20,9 +20,10 @@ export const DIFFICULTIES = Object.freeze({
   hard: { id: "hard", speed: 310, penaltyFraction: 0.18, maxBreachCells: 10 },
 });
 export const ARENA_THEMES = [
-  { id: "neon", name: "Neon Circuit", floor: ["#1a2a37", "#101923"], wall: ["#526176", "#273345"], accent: "#56edc0" },
-  { id: "copper", name: "Copper Vault", floor: ["#30251f", "#171917"], wall: ["#74604e", "#39302a"], accent: "#ffb45f" },
-  { id: "frost", name: "Frost Byte", floor: ["#1c3040", "#101b2b"], wall: ["#637b91", "#2d435b"], accent: "#8eeaff" },
+  { id: "neon", name: "Neon Circuit", accent: "#56edc0" },
+  { id: "city", name: "Downtown Grid", accent: "#ffcf5c" },
+  { id: "park", name: "Sunny Park", accent: "#8be36b" },
+  { id: "ocean", name: "Coral Bay", accent: "#5fd6ff" },
 ];
 
 const key = (x, y) => `${x},${y}`;
@@ -60,6 +61,28 @@ function carveMaze(width, height, rng) {
   return walls;
 }
 
+// Small point-symmetric obstacle clusters (buildings, trees, islands) so both bases face the same map.
+// Every cluster keeps two open cells to any other wall, so no area can ever be sealed off.
+function scatterObstacles(walls, width, height, rng) {
+  const bases = [{ x: 4, y: 4 }, { x: width - 5, y: height - 5 }];
+  const pairs = 9 + Math.floor(rng() * 4);
+  const clear = (x, y) => {
+    if (bases.some((b) => Math.abs(x - b.x) <= 4 && Math.abs(y - b.y) <= 4)) return false;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (walls[y + dy]?.[x + dx] !== false) return false;
+    return true;
+  };
+  for (let placed = 0, tries = 0; placed < pairs && tries < 500; tries++) {
+    const long = 1 + Math.floor(rng() * 3), short = 1 + Math.floor(rng() * 2), turn = rng() < .5;
+    const w = turn ? short : long, h = turn ? long : short;
+    const x0 = 3 + Math.floor(rng() * (width - 6 - w)), y0 = 3 + Math.floor(rng() * (height - 6 - h));
+    const cells = [];
+    for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) cells.push([x0 + dx, y0 + dy], [width - 1 - x0 - dx, height - 1 - y0 - dy]);
+    if (!cells.every(([x, y]) => clear(x, y))) continue;
+    for (const [x, y] of cells) walls[y][x] = true;
+    placed++;
+  }
+}
+
 function openBase(walls, cx, cy, radius = 2) {
   for (let y = cy - radius; y <= cy + radius; y++) for (let x = cx - radius; x <= cx + radius; x++) {
     if (y > 0 && x > 0 && y < walls.length - 1 && x < walls[0].length - 1) walls[y][x] = false;
@@ -71,6 +94,7 @@ export function createGame({ players, seed = Math.random, now = Date.now(), star
   const rules = DIFFICULTIES[difficulty] || DIFFICULTIES.normal;
   const width = GAME.width, height = GAME.height, cellSize = GAME.cellSize;
   const walls = carveMaze(width, height, seed);
+  scatterObstacles(walls, width, height, seed);
   const bases = [{ x: 4, y: 4 }, { x: width - 5, y: height - 5 }];
   bases.forEach((b) => openBase(walls, b.x, b.y));
   const state = {
@@ -206,14 +230,27 @@ export function playerSpeed(player, now) {
   return player.speedUntil > now ? base * 1.6 : base;
 }
 
+// Returns how much of the distance could not be travelled because a wall was in the way.
 function moveAxis(state, player, axis, distance) {
   // Small sub-steps let players slide flush against walls instead of stopping a whole step short.
-  const steps = Math.ceil(Math.abs(distance) / 2), step = distance / steps;
+  const steps = Math.ceil(Math.abs(distance) / 2);
+  if (!steps) return 0;
+  const step = distance / steps;
   for (let i = 0; i < steps; i++) {
     const nx = axis === "x" ? player.x + step : player.x, ny = axis === "y" ? player.y + step : player.y;
-    if (collidesWithWall(state, nx, ny)) return;
+    if (collidesWithWall(state, nx, ny)) return Math.abs(step) * (steps - i);
     player.x = nx; player.y = ny;
   }
+  return 0;
+}
+
+// Corner assist: when a straight move clips an obstacle corner, slide toward the lane centre so the
+// player rounds the corner instead of grinding against it.
+function assistCorner(state, player, axis, blocked) {
+  const other = axis === "x" ? "y" : "x", centre = (Math.floor(player[other] / state.cellSize) + .5) * state.cellSize;
+  const offset = centre - player[other];
+  if (Math.abs(offset) < .01) return;
+  moveAxis(state, player, other, Math.sign(offset) * Math.min(Math.abs(offset), blocked));
 }
 
 function movePlayer(state, player, dt, now) {
@@ -222,8 +259,10 @@ function movePlayer(state, player, dt, now) {
   if (!dx && !dy) return;
   const length = Math.hypot(dx, dy), speed = playerSpeed(player, now);
   // Axis-separated collision allows sliding along walls.
-  if (dx) moveAxis(state, player, "x", dx / length * speed * dt);
-  if (dy) moveAxis(state, player, "y", dy / length * speed * dt);
+  const blockedX = dx ? moveAxis(state, player, "x", dx / length * speed * dt) : 0;
+  const blockedY = dy ? moveAxis(state, player, "y", dy / length * speed * dt) : 0;
+  if (blockedX && !dy) assistCorner(state, player, "x", blockedX);
+  if (blockedY && !dx) assistCorner(state, player, "y", blockedY);
 }
 
 function otherOwner(state, player, cell) {

@@ -649,6 +649,226 @@ function drawAvatar(player, x, y, time, cellSize) {
   }
   ctx.restore();
 }
+// Arena looks. Floors and walls are painted once per map into offscreen layers, then reused every frame.
+function cellHash(x, y, salt = 0) {
+  let h = (Math.imul(x + 1, 374761393) + Math.imul(y + 1, 668265263) + Math.imul(salt + 1, 1442695041)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function mixColor(hex, amount) {
+  const n = Number.parseInt(hex.slice(1, 7), 16), target = amount < 0 ? 0 : 255, p = Math.abs(amount);
+  const ch = (v) => Math.round(v + (target - v) * p);
+  return `rgb(${ch((n >> 16) & 255)},${ch((n >> 8) & 255)},${ch(n & 255)})`;
+}
+const isWallAt = (map, x, y) => x < 0 || y < 0 || x >= map.width || y >= map.height || Boolean(map.walls[y][x]);
+function forCells(map, fn, wantWall) {
+  for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (Boolean(map.walls[y][x]) === wantWall) fn(x, y, x * map.cellSize, y * map.cellSize);
+}
+function wallClusters(map) {
+  const { width, height, walls } = map, id = walls.map((row) => row.map(() => -1)), border = new Set();
+  let next = 0;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    if (!walls[y][x] || id[y][x] >= 0) continue;
+    const stack = [[x, y]]; id[y][x] = next;
+    while (stack.length) {
+      const [cx, cy] = stack.pop();
+      if (cx === 0 || cy === 0 || cx === width - 1 || cy === height - 1) border.add(next);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx >= 0 && ny >= 0 && nx < width && ny < height && walls[ny][nx] && id[ny][nx] < 0) { id[ny][nx] = next; stack.push([nx, ny]); }
+      }
+    }
+    next++;
+  }
+  return { id, border };
+}
+function disc(g, x, y, r, color) { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fillStyle = color; g.fill(); }
+function classicLook(floorStops, wall, accent) {
+  return {
+    territoryFill: .20, edgeAlpha: .72,
+    floor(g, map) {
+      const W = map.width * map.cellSize, H = map.height * map.cellSize, grad = g.createLinearGradient(0, 0, W, H);
+      grad.addColorStop(0, floorStops[0]); grad.addColorStop(.48, floorStops[1]); grad.addColorStop(1, floorStops[2]);
+      g.fillStyle = grad; g.fillRect(0, 0, W, H);
+      g.strokeStyle = colorAlpha(accent, .045); g.lineWidth = 1;
+      for (let x = 0; x <= map.width; x += 2) { g.beginPath(); g.moveTo(x * map.cellSize, 0); g.lineTo(x * map.cellSize, H); g.stroke(); }
+      for (let y = 0; y <= map.height; y += 2) { g.beginPath(); g.moveTo(0, y * map.cellSize); g.lineTo(W, y * map.cellSize); g.stroke(); }
+    },
+    walls(g, map) {
+      const cs = map.cellSize, block = g.createLinearGradient(0, 0, cs, cs);
+      block.addColorStop(0, wall[0]); block.addColorStop(.18, "#344357"); block.addColorStop(1, wall[1]);
+      forCells(map, (x, y, px, py) => {
+        g.fillStyle = "#0a1018"; g.fillRect(px, py + 2, cs, cs);
+        roundRect(g, px + 1, py + 1, cs - 2, cs - 3, 3); g.fillStyle = block; g.fill();
+        g.fillStyle = "#d6e5f01b"; g.fillRect(px + 3, py + 3, cs - 6, 1.5);
+        g.fillStyle = "#0a101833"; g.fillRect(px + 3, py + cs - 5, cs - 6, 2);
+      }, true);
+    },
+  };
+}
+const ARENA_LOOKS = {
+  neon: classicLook(["#1a2a37", "#172a32", "#101923"], ["#526176", "#273345"], "#56edc0"),
+  // Older daily replays may still reference these two retired arenas.
+  copper: classicLook(["#30251f", "#241f1d", "#171917"], ["#74604e", "#39302a"], "#ffb45f"),
+  frost: classicLook(["#1c3040", "#192b39", "#101b2b"], ["#637b91", "#2d435b"], "#8eeaff"),
+  city: {
+    territoryFill: .4, edgeAlpha: .95, solidTerritory: true, edgeContrast: "#0000004d",
+    floor(g, map) {
+      const cs = map.cellSize, lane = 6, mid = 3;
+      g.fillStyle = "#3a404b"; g.fillRect(0, 0, map.width * cs, map.height * cs);
+      forCells(map, (x, y, px, py) => {
+        const besideBuilding = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => isWallAt(map, x + dx, y + dy));
+        if (besideBuilding) { g.fillStyle = "#555d6b"; g.fillRect(px, py, cs, cs); g.fillStyle = "#00000026"; g.fillRect(px, py, cs, 1); g.fillRect(px, py, 1, cs); }
+        for (let k = 0; k < 3; k++) if (cellHash(x, y, k) < .55) { g.fillStyle = cellHash(x, y, k + 9) < .5 ? "#ffffff0c" : "#00000022"; g.fillRect(px + cellHash(x, y, k + 3) * 17, py + cellHash(x, y, k + 6) * 17, 2, 2); }
+        if (besideBuilding) return;
+        const row = y % lane === mid, col = x % lane === mid;
+        const nearCross = (v) => v % lane === mid - 1 || v % lane === mid + 1;
+        g.fillStyle = "#ffffffa8";
+        if (row && !col && nearCross(x)) { for (let i = 0; i < 4; i++) g.fillRect(px + 2 + i * 4.5, py + 3, 2.5, cs - 6); }
+        else if (col && !row && nearCross(y)) { for (let i = 0; i < 4; i++) g.fillRect(px + 3, py + 2 + i * 4.5, cs - 6, 2.5); }
+        else if (row && !col) { g.fillStyle = "#f4d35ec0"; g.fillRect(px + 4, py + cs / 2 - 1, 12, 2); }
+        else if (col && !row) { g.fillStyle = "#f4d35ec0"; g.fillRect(px + cs / 2 - 1, py + 4, 2, 12); }
+        else if (cellHash(x, y, 30) < .02) { disc(g, px + cs / 2, py + cs / 2, 4.5, "#555c68"); disc(g, px + cs / 2, py + cs / 2, 3.5, "#2c3139"); }
+      }, false);
+    },
+    walls(g, map) {
+      const cs = map.cellSize, { id, border } = wallClusters(map);
+      const palette = ["#e07a5f", "#5b8fd9", "#f2c14e", "#9aa7bb", "#c38fd8", "#5fbf9f", "#f28fad", "#7fb3e6"];
+      forCells(map, (x, y, px, py) => { g.fillStyle = "#00000055"; g.fillRect(px + 3, py + 4, cs, cs); }, true);
+      forCells(map, (x, y, px, py) => {
+        const cluster = id[y][x], edge = border.has(cluster);
+        const roof = edge ? "#4b5363" : palette[Math.floor(cellHash(cluster, 7) * palette.length)];
+        g.fillStyle = roof; g.fillRect(px, py, cs, cs);
+        g.fillStyle = "#00000030";
+        if (!isWallAt(map, x, y - 1)) g.fillRect(px, py, cs, 2);
+        if (!isWallAt(map, x - 1, y)) g.fillRect(px, py, 2, cs);
+        if (!isWallAt(map, x + 1, y)) g.fillRect(px + cs - 2, py, 2, cs);
+        if (!isWallAt(map, x, y - 1)) { g.fillStyle = "#ffffff30"; g.fillRect(px + 2, py + 2, cs - 4, 1.5); }
+        if (!isWallAt(map, x, y + 1)) {
+          g.fillStyle = mixColor(roof, -.4); g.fillRect(px, py + cs - 6, cs, 6);
+          for (let i = 0; i < 4; i++) { g.fillStyle = cellHash(x, y, i + 40) < .6 ? "#ffe39a" : "#262c38"; g.fillRect(px + 2 + i * 4.4, py + cs - 4.5, 2.6, 2.6); }
+        }
+        if (edge) { if ((x + y) % 2 === 0) { g.fillStyle = "#ffffff0e"; g.fillRect(px + 4, py + 4, cs - 8, cs - 10); } return; }
+        const r = cellHash(x, y, 5);
+        if (r < .18) { g.fillStyle = "#dfe4ea"; g.fillRect(px + 5, py + 4, 7, 5); g.fillStyle = "#8f98a3"; g.fillRect(px + 6, py + 5.5, 5, 1); g.fillRect(px + 6, py + 7, 5, 1); }
+        else if (r < .26) { disc(g, px + 10, py + 8, 4, "#7a4b35"); disc(g, px + 10, py + 8, 2.8, "#a8694a"); }
+        else if (r < .33) { disc(g, px + 9, py + 8, 4.5, "#4f9e45"); disc(g, px + 11, py + 7, 2.5, "#74c35f"); }
+        else if (r < .41) { g.fillStyle = "#cfeaffaa"; g.fillRect(px + 5, py + 4, 10, 5); g.fillStyle = "#ffffff66"; g.fillRect(px + 5, py + 4, 10, 1.5); }
+      }, true);
+    },
+  },
+  park: {
+    territoryFill: .55, edgeAlpha: 1, solidTerritory: true, edgeContrast: "#0b2a1299",
+    floor(g, map) {
+      const cs = map.cellSize, W = map.width * cs, H = map.height * cs;
+      g.fillStyle = "#5dab4c"; g.fillRect(0, 0, W, H);
+      g.fillStyle = "#ffffff12";
+      for (let x = 0; x < map.width; x += 4) g.fillRect(x * cs, 0, cs * 2, H);
+      forCells(map, (x, y, px, py) => {
+        g.strokeStyle = "#3f8c3a"; g.lineWidth = 1.2;
+        for (let k = 0; k < 2; k++) if (cellHash(x, y, k) < .6) {
+          const tx = px + 3 + cellHash(x, y, k + 2) * 14, ty = py + 5 + cellHash(x, y, k + 4) * 12;
+          g.beginPath(); g.moveTo(tx - 2, ty - 3); g.lineTo(tx, ty); g.lineTo(tx + 2, ty - 3); g.stroke();
+        }
+        if (cellHash(x, y, 50) < .07) {
+          const color = ["#ffffff", "#ffc2dc", "#ffe066", "#cdb4ff"][Math.floor(cellHash(x, y, 51) * 4)];
+          const fx = px + 5 + cellHash(x, y, 52) * 10, fy = py + 5 + cellHash(x, y, 53) * 10;
+          for (let i = 0; i < 4; i++) disc(g, fx + Math.cos(i * Math.PI / 2) * 2, fy + Math.sin(i * Math.PI / 2) * 2, 1.7, color);
+          disc(g, fx, fy, 1.2, "#f4a300");
+        }
+      }, false);
+    },
+    walls(g, map) {
+      const cs = map.cellSize, { id, border } = wallClusters(map);
+      forCells(map, (x, y, px, py) => { g.beginPath(); g.ellipse(px + cs / 2 + 3, py + cs / 2 + 4, 10, 8, 0, 0, Math.PI * 2); g.fillStyle = "#1e4d1a55"; g.fill(); }, true);
+      forCells(map, (x, y, px, py) => {
+        const cx = px + cs / 2, cy = py + cs / 2;
+        if (border.has(id[y][x])) {
+          roundRect(g, px - .5, py - .5, cs + 1, cs + 1, 4); g.fillStyle = "#2f7a34"; g.fill();
+          disc(g, px + 6, py + 7, 5, "#3a9140"); disc(g, px + 14, py + 12, 5, "#3a9140"); disc(g, px + 7, py + 6, 1.8, "#6cc36c66");
+          return;
+        }
+        const kind = cellHash(x, y, 9);
+        const [base, light] = kind < .14 ? ["#ef9fc0", "#f8c8dc"] : kind < .24 ? ["#e3972f", "#f5c04a"] : kind < .6 ? ["#2e8b3e", "#48a94b"] : ["#277a38", "#3f9d45"];
+        disc(g, cx, cy - 1, 10.5, base);
+        disc(g, cx - 3, cy - 4, 6, light); disc(g, cx + 4, cy - 1, 4, light);
+        disc(g, cx - 4, cy - 6, 2.2, "#ffffff38");
+        if (kind < .14) for (let i = 0; i < 4; i++) disc(g, px + 4 + cellHash(x, y, 60 + i) * 12, py + 3 + cellHash(x, y, 70 + i) * 12, 1.1, "#ffffff");
+      }, true);
+    },
+  },
+  ocean: {
+    territoryFill: .55, edgeAlpha: 1, solidTerritory: true, edgeContrast: "#04283d99",
+    floor(g, map) {
+      const cs = map.cellSize, W = map.width * cs, H = map.height * cs, grad = g.createLinearGradient(0, 0, W, H);
+      grad.addColorStop(0, "#1f97c6"); grad.addColorStop(1, "#11679a");
+      g.fillStyle = grad; g.fillRect(0, 0, W, H);
+      forCells(map, (x, y, px, py) => {
+        const nearShore = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => isWallAt(map, x + dx, y + dy));
+        if (nearShore) { g.fillStyle = "#66e0e833"; g.fillRect(px, py, cs, cs); }
+        if (cellHash(x, y, 1) < .14) {
+          g.strokeStyle = "#ffffff30"; g.lineWidth = 1.2;
+          const wx = px + 4 + cellHash(x, y, 2) * 10, wy = py + 8 + cellHash(x, y, 3) * 8;
+          g.beginPath(); g.arc(wx, wy, 4, Math.PI * 1.15, Math.PI * 1.85); g.stroke();
+          g.beginPath(); g.arc(wx + 6, wy, 4, Math.PI * 1.15, Math.PI * 1.85); g.stroke();
+        }
+      }, false);
+    },
+    animate(g, map, time) {
+      const W = map.width * map.cellSize, H = map.height * map.cellSize;
+      for (let i = 0; i < 22; i++) {
+        const glow = (Math.sin(time / 650 + i * 1.7) + 1) / 2;
+        if (glow < .7) continue;
+        const x = cellHash(i, 3, 91) * W, y = cellHash(i, 5, 92) * H;
+        if (isWallAt(map, Math.floor(x / map.cellSize), Math.floor(y / map.cellSize))) continue;
+        g.fillStyle = `rgba(255,255,255,${(glow - .7) * 2.6})`; g.fillRect(x - 2, y - .5, 4, 1); g.fillRect(x - .5, y - 2, 1, 4);
+      }
+    },
+    walls(g, map) {
+      const cs = map.cellSize, { id, border } = wallClusters(map);
+      g.fillStyle = "#ffffffb3"; forCells(map, (x, y, px, py) => { roundRect(g, px - 2.5, py - 2.5, cs + 5, cs + 5, 7); g.fill(); }, true);
+      g.fillStyle = "#d4b066"; forCells(map, (x, y, px, py) => { roundRect(g, px - 1, py - 1, cs + 2, cs + 2, 6); g.fill(); }, true);
+      g.fillStyle = "#f0d58f"; forCells(map, (x, y, px, py) => {
+        roundRect(g, px + .5, py, cs - 1, cs - 2, 5); g.fill();
+        if (isWallAt(map, x + 1, y) && x + 1 < map.width) g.fillRect(px + cs / 2, py, cs, cs - 2);
+        if (isWallAt(map, x, y + 1) && y + 1 < map.height) g.fillRect(px + .5, py + cs / 2, cs - 1, cs);
+      }, true);
+      forCells(map, (x, y, px, py) => {
+        for (let k = 0; k < 3; k++) { g.fillStyle = "#c9a45c88"; g.fillRect(px + 3 + cellHash(x, y, k + 20) * 14, py + 3 + cellHash(x, y, k + 23) * 12, 1.5, 1.5); }
+        const r = cellHash(x, y, 5), edge = border.has(id[y][x]);
+        if (!edge && r < .17) {
+          g.strokeStyle = "#8a5a2b"; g.lineWidth = 2.2; g.lineCap = "round";
+          g.beginPath(); g.moveTo(px + 8, py + 16); g.quadraticCurveTo(px + 7, py + 10, px + 11, py + 6); g.stroke();
+          for (let i = 0; i < 5; i++) {
+            const a = -Math.PI / 2 + (i - 2) * .75;
+            g.save(); g.translate(px + 11, py + 6); g.rotate(a); g.beginPath(); g.ellipse(4.5, 0, 5, 1.8, 0, 0, Math.PI * 2); g.fillStyle = i % 2 ? "#2f9e44" : "#40c057"; g.fill(); g.restore();
+          }
+          disc(g, px + 10, py + 7, 1.3, "#6b3f1d"); disc(g, px + 12, py + 7.5, 1.3, "#6b3f1d");
+        } else if (!edge && r < .31) { disc(g, px + 8, py + 10, 3.5, "#8d99a6"); disc(g, px + 12, py + 12, 2.5, "#a9b4bf"); disc(g, px + 7, py + 9, 1.2, "#ffffff55"); }
+        else if (edge ? r < .05 : r < .37) {
+          g.save(); g.translate(px + 10, py + 9); g.fillStyle = "#ff8a5c";
+          for (let i = 0; i < 5; i++) { g.rotate(Math.PI * 2 / 5); g.beginPath(); g.ellipse(0, -2.4, 1.1, 2.6, 0, 0, Math.PI * 2); g.fill(); }
+          g.restore();
+        }
+      }, true);
+    },
+  },
+};
+let arenaCache = { key: "", mapRef: null, floor: null, walls: null, look: null };
+function arenaLayers(map, themeId) {
+  if (arenaCache.mapRef === map && arenaCache.themeId === themeId) return arenaCache;
+  const look = ARENA_LOOKS[themeId] || ARENA_LOOKS.neon;
+  const key = `${themeId}|${map.width}x${map.height}|${map.walls.map((row) => row.map(Number).join("")).join("")}`;
+  if (arenaCache.key !== key) {
+    const layer = () => { const c = document.createElement("canvas"); c.width = map.width * map.cellSize; c.height = map.height * map.cellSize; return c; };
+    const floor = layer(), walls = layer();
+    look.floor(floor.getContext("2d"), map); look.walls(walls.getContext("2d"), map);
+    arenaCache = { key, floor, walls, look };
+  }
+  arenaCache.mapRef = map; arenaCache.themeId = themeId;
+  return arenaCache;
+}
+
 function draw(time = 0) {
   requestAnimationFrame(draw);
   advanceDailyReplay();
@@ -662,26 +882,22 @@ function draw(time = 0) {
   }
   const motionTime = visualEffectsEnabled ? time : 0;
   const { width, height, cellSize, walls } = state.map;
-  const themes = {
-    neon: { floor: ["#1a2a37", "#101923"], wall: ["#526176", "#273345"], accent: "#56edc0" },
-    copper: { floor: ["#30251f", "#171917"], wall: ["#74604e", "#39302a"], accent: "#ffb45f" },
-    frost: { floor: ["#1c3040", "#101b2b"], wall: ["#637b91", "#2d435b"], accent: "#8eeaff" },
-  };
-  const theme = themes[state.theme?.id] || themes.neon;
-  const floorMid = { neon: "#172a32", copper: "#241f1d", frost: "#192b39" }[state.theme?.id] || "#172a32";
-  const floor = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-  floor.addColorStop(0, theme.floor[0]); floor.addColorStop(.48, floorMid); floor.addColorStop(1, theme.floor[1]);
-  ctx.fillStyle = floor; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  // Quiet floor markings add texture without competing with territory colors.
-  ctx.strokeStyle = colorAlpha(theme.accent, .045); ctx.lineWidth = 1;
-  for (let x = 0; x <= width; x += 2) { ctx.beginPath(); ctx.moveTo(x * cellSize, 0); ctx.lineTo(x * cellSize, height * cellSize); ctx.stroke(); }
-  for (let y = 0; y <= height; y += 2) { ctx.beginPath(); ctx.moveTo(0, y * cellSize); ctx.lineTo(width * cellSize, y * cellSize); ctx.stroke(); }
+  const arena = arenaLayers(state.map, state.theme?.id), look = arena.look;
+  ctx.drawImage(arena.floor, 0, 0);
+  if (look.animate) look.animate(ctx, state.map, motionTime);
   const players = state.players || [];
   const ownerByCell = new Map();
   for (const player of players) for (const packed of player.territory) ownerByCell.set(packed, player);
   for (const [packed, player] of ownerByCell) {
     const [x, y] = parseCell(packed), px = x * cellSize, py = y * cellSize;
-    const shade = .20 + ((x * 17 + y * 31) % 5) * .012;
+    if (look.solidTerritory) {
+      // Gapless paint with a diagonal hatch, so claimed land never blends into grass, water, or asphalt.
+      ctx.fillStyle = colorAlpha(player.color, look.territoryFill); ctx.fillRect(px, py, cellSize, cellSize);
+      ctx.strokeStyle = "#ffffff26"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(px, py + cellSize); ctx.lineTo(px + cellSize, py); ctx.stroke();
+      continue;
+    }
+    const shade = look.territoryFill + ((x * 17 + y * 31) % 5) * .012;
     roundedRect(px + 1, py + 1, cellSize - 2, cellSize - 2, 3);
     ctx.fillStyle = colorAlpha(player.color, shade); ctx.fill();
     roundedRect(px + 2, py + 2, cellSize - 4, 2, 1);
@@ -704,18 +920,11 @@ function draw(time = 0) {
       if (ownerByCell.get(`${x},${y + 1}`) !== player) { ctx.moveTo(px, py + far); ctx.lineTo(px + cellSize, py + far); }
       if (ownerByCell.get(`${x - 1},${y}`) !== player) { ctx.moveTo(px + inset, py); ctx.lineTo(px + inset, py + cellSize); }
     }
-    ctx.strokeStyle = colorAlpha(player.color, .72); ctx.lineWidth = 1.5; ctx.shadowColor = colorAlpha(player.color, .55); ctx.shadowBlur = 5; ctx.stroke(); ctx.shadowBlur = 0;
+    // Bright arenas get a dark under-stroke so territory edges stay readable on grass and water.
+    if (look.edgeContrast) { ctx.strokeStyle = look.edgeContrast; ctx.lineWidth = 3.5; ctx.stroke(); }
+    ctx.strokeStyle = colorAlpha(player.color, look.edgeAlpha); ctx.lineWidth = look.edgeContrast ? 2 : 1.5; ctx.shadowColor = colorAlpha(player.color, .55); ctx.shadowBlur = 5; ctx.stroke(); ctx.shadowBlur = 0;
   }
-  // Raised, beveled blocks make the maze read as a physical board.
-  const block = ctx.createLinearGradient(0, 0, cellSize, cellSize);
-  block.addColorStop(0, theme.wall[0]); block.addColorStop(.18, "#344357"); block.addColorStop(1, theme.wall[1]);
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (walls[y][x]) {
-    const px = x * cellSize, py = y * cellSize;
-    ctx.fillStyle = "#0a1018"; ctx.fillRect(px, py + 2, cellSize, cellSize);
-    roundedRect(px + 1, py + 1, cellSize - 2, cellSize - 3, 3); ctx.fillStyle = block; ctx.fill();
-    ctx.fillStyle = "#d6e5f01b"; ctx.fillRect(px + 3, py + 3, cellSize - 6, 1.5);
-    ctx.fillStyle = "#0a101833"; ctx.fillRect(px + 3, py + cellSize - 5, cellSize - 6, 2);
-  }
+  ctx.drawImage(arena.walls, 0, 0);
   const powerColors = { speed: "#ffd45c", shield: "#70d8ff", freeze: "#9ba8ff", bonus: "#ff83ce" };
   const glyphs = { speed: "↯", shield: "◇", freeze: "❄", bonus: "+" };
   for (const power of state.powerUps || []) {

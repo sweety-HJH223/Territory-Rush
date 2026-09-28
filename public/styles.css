@@ -187,5 +187,7 @@ body:has(.room-panel:not(.hidden)){overflow:hidden}
 .emote-bar button:hover{border-color:#57e38988;background:#162231}.emote-bar button:active{transform:scale(.95)}
 .emote-bar kbd{font:600 11px 'DM Mono',monospace;padding:3px 6px;border-radius:5px;background:#1f2a3a;border:1px solid #334155;color:#9fb0c4}
 
+.lobby-howto kbd{font:600 11px 'DM Mono',monospace;padding:1px 5px;border-radius:4px;background:#1f2a3a;border:1px solid #334155;color:#c9d6e3}
+
 /* Share result */
 .result-actions .share-button{gap:8px}

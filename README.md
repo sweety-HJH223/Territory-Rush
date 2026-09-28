@@ -35,6 +35,7 @@ The Crown activates with **1:30 remaining** and moves at **0:45**. It always app
 - **Create Room:** Host a private match and share the room code with a friend.
 - **Join Room:** Enter a friend’s five-character room code.
 - **Play vs Bot:** Challenge the Rush Bot solo.
+- **Arenas:** Each match picks one of four arenas: Neon Circuit, Downtown Grid (buildings and streets), Sunny Park (trees and hedges), or Coral Bay (islands and beaches). Obstacles are mirrored, so both bases face the same map, and no area can be sealed off. Corner assist slides you around obstacle corners instead of letting you snag on them.
 - **Emotes:** Press **1–4** during a match (or click the buttons under the arena) to pop a GG, 😂, "Catch me!" or "Oops" bubble over your character. Rush Bot taunts back when it cuts you.
 - **Share result:** The results screen can save an image of your score, stats, and the final board (on desktop it is also copied to the clipboard; on phones it opens the share sheet).
 - **Difficulty (Easy / Normal / Hard):** Pick it before creating a room or playing the bot; the room host can change it in the lobby. Harder settings mean faster movement, a bigger loss when your trail is cut, and more land stolen per capture. Against the bot, it also sets how aggressive the Rush Bot plays. The Daily Challenge always uses Normal.
