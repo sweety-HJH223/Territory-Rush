@@ -8,7 +8,7 @@ export const GAME = Object.freeze({
   durationMs: 180_000,
   tickMs: 50,
   playerRadius: 7,
-  baseSpeed: 150,
+  baseSpeed: 200,
   penaltyFraction: 0.12,
   maxCaptureFraction: 0.09,
   maxBreachCells: 6,
@@ -83,7 +83,7 @@ export function createGame({ players, seed = Math.random, now = Date.now(), star
     theme: ARENA_THEMES[Math.floor(seed() * ARENA_THEMES.length)],
     effects: [], highlights: [], powerUps: [], random: seed,
   crown: { active: false, cell: null, ownerId: null, activateAt: now + startDelayMs + 90_000, moveAt: now + startDelayMs + 135_000, moveAnnounced: false, nextPointAt: null },
-    nextPowerUpAt: now + startDelayMs + 15_000 + Math.floor(seed() * 5_001),
+    nextPowerUpAt: now + startDelayMs + 6_000 + Math.floor(seed() * 3_001),
   };
   state.players.forEach((p) => paintBase(state, p));
   state.crown.cell = findCrownCell(state, Math.floor(width / 2), Math.floor(height / 2));
@@ -375,7 +375,7 @@ function tickPowerUps(state, now) {
   for (const power of expired) state.effects.push({ type: "power-expire", powerType: power.type });
   if (now >= state.nextPowerUpAt) {
     spawnPowerUp(state, now);
-    state.nextPowerUpAt = now + 15_000 + Math.floor(state.random() * 5_001);
+    state.nextPowerUpAt = now + 8_000 + Math.floor(state.random() * 4_001);
   }
 }
 

@@ -556,8 +556,8 @@ function draw(time = 0) {
 function interpolate(id, x, y) {
   const target = targets.get(id) || { x, y };
   const rendered = renderPositions.get(id) || { x: target.x, y: target.y };
-  rendered.x += (target.x - rendered.x) * .34;
-  rendered.y += (target.y - rendered.y) * .34;
+  rendered.x += (target.x - rendered.x) * .5;
+  rendered.y += (target.y - rendered.y) * .5;
   renderPositions.set(id, rendered);
   return rendered;
 }
