@@ -35,6 +35,7 @@ The Crown activates with **1:30 remaining** and moves at **0:45**. It always app
 - **Create Room:** Host a private match and share the room code with a friend.
 - **Join Room:** Enter a friend’s five-character room code.
 - **Play vs Bot:** Challenge the Rush Bot solo.
+- **Difficulty (Easy / Normal / Hard):** Pick it before creating a room or playing the bot; the room host can change it in the lobby. Harder settings mean faster movement, a bigger loss when your trail is cut, and more land stolen per capture. Against the bot, it also sets how aggressive the Rush Bot plays. The Daily Challenge always uses Normal.
 - **Daily Challenge:** Compete on the same daily seed and compare scores on the leaderboard.
 
 Choose a character in the room lobby. Each player must choose a different character. The six characters are Comet, Moss, Blaze, Violet, Sunny, and Berry.

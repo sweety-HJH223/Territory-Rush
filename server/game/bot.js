@@ -1,5 +1,13 @@
 import { GAME, cellAt, playerSpeed, setPlayerInput } from "./core.js";
 
+// How often the bot chases your trail, and how often/long it hesitates between moves.
+const BRAINS = {
+  easy: { hunt: 0.1, hesitateChance: 0.8, hesitateMs: [250, 500] },
+  normal: { hunt: 0.22, hesitateChance: 0.5, hesitateMs: [150, 350] },
+  hard: { hunt: 0.4, hesitateChance: 0.15, hesitateMs: [80, 160] },
+};
+const brain = (game) => BRAINS[game.rules?.id] || BRAINS.normal;
+
 const id = (x, y) => `${x},${y}`;
 const point = (value) => value.split(",").map(Number);
 const same = (a, b) => a?.x === b?.x && a?.y === b?.y;
@@ -33,7 +41,7 @@ function chooseRoute(game, bot, opponent, now) {
   if (crown && game.crown.active && bot.trail.length && here.x === crown.x && here.y === crown.y && !bot.territory.has(crownKey)) {
     return findRoute(game, bot, (x, y) => bot.territory.has(id(x, y)));
   }
-  if (opponent.trail.length && bot.trail.length < 5 && Math.hypot(bot.x - opponent.x, bot.y - opponent.y) < 300 && random() < 0.35) {
+  if (opponent.trail.length && bot.trail.length < 5 && Math.hypot(bot.x - opponent.x, bot.y - opponent.y) < 300 && random() < brain(game).hunt) {
     const exposed = new Set(opponent.trail);
     const route = findRoute(game, bot, (x, y) => exposed.has(id(x, y)));
     if (route.length) return route;
@@ -76,6 +84,10 @@ export function updateBotInput(game, now = Date.now()) {
   const step = playerSpeed(bot, now) * GAME.tickMs / 1000, aim = Math.max(3, step / 2 + 0.5), arrive = aim + 1.5;
   if (bot.route?.length && Math.abs(bot.x - (bot.route[0].x + 0.5) * game.cellSize) < arrive && Math.abs(bot.y - (bot.route[0].y + 0.5) * game.cellSize) < arrive) bot.route.shift();
   if (!bot.route?.length) {
+    const { hesitateChance, hesitateMs: [minMs, maxMs] } = brain(game);
+    if (bot.thinkUntil === undefined && game.random() < hesitateChance) bot.thinkUntil = now + minMs + game.random() * (maxMs - minMs);
+    if (bot.thinkUntil > now) { setPlayerInput(game, bot.id, {}); return; }
+    bot.thinkUntil = undefined;
     bot.route = chooseRoute(game, bot, opponent, now);
   }
   const waypoint = bot.route?.[0];

@@ -8,10 +8,16 @@ export const GAME = Object.freeze({
   durationMs: 180_000,
   tickMs: 50,
   playerRadius: 7,
-  baseSpeed: 200,
+  baseSpeed: 280,
   penaltyFraction: 0.12,
   maxCaptureFraction: 0.09,
   maxBreachCells: 6,
+});
+// Per-match rules; "normal" matches GAME so the Daily Challenge stays comparable.
+export const DIFFICULTIES = Object.freeze({
+  easy: { id: "easy", speed: 240, penaltyFraction: 0.08, maxBreachCells: 4 },
+  normal: { id: "normal", speed: GAME.baseSpeed, penaltyFraction: GAME.penaltyFraction, maxBreachCells: GAME.maxBreachCells },
+  hard: { id: "hard", speed: 310, penaltyFraction: 0.18, maxBreachCells: 10 },
 });
 export const ARENA_THEMES = [
   { id: "neon", name: "Neon Circuit", floor: ["#1a2a37", "#101923"], wall: ["#526176", "#273345"], accent: "#56edc0" },
@@ -60,14 +66,15 @@ function openBase(walls, cx, cy, radius = 2) {
   }
 }
 
-export function createGame({ players, seed = Math.random, now = Date.now(), startDelayMs = 0 } = {}) {
+export function createGame({ players, seed = Math.random, now = Date.now(), startDelayMs = 0, difficulty = "normal" } = {}) {
   if (!Array.isArray(players) || players.length !== 2) throw new Error("A match requires exactly two players.");
+  const rules = DIFFICULTIES[difficulty] || DIFFICULTIES.normal;
   const width = GAME.width, height = GAME.height, cellSize = GAME.cellSize;
   const walls = carveMaze(width, height, seed);
   const bases = [{ x: 4, y: 4 }, { x: width - 5, y: height - 5 }];
   bases.forEach((b) => openBase(walls, b.x, b.y));
   const state = {
-    width, height, cellSize, walls,
+    width, height, cellSize, walls, rules,
     players: players.map((p, i) => {
       const b = bases[i];
       return {
@@ -75,7 +82,7 @@ export function createGame({ players, seed = Math.random, now = Date.now(), star
         x: center({ cellSize }, b.x, b.y).x, y: center({ cellSize }, b.x, b.y).y,
         base: { ...b }, input: { up: false, down: false, left: false, right: false },
         territory: new Set(), trail: [], trailSet: new Set(), trailStart: null, shield: false,
-        speedUntil: 0, freezeUntil: 0, connected: true, bot: Boolean(p.bot), touchingTrail: false,
+        baseSpeed: rules.speed, speedUntil: 0, freezeUntil: 0, connected: true, bot: Boolean(p.bot), touchingTrail: false,
         stats: { claims: 0, trailCuts: 0, powerUpsCollected: 0, cellsClaimed: 0, crownPoints: 0 },
       };
     }),
@@ -195,7 +202,8 @@ function collidesWithWall(state, x, y) {
 }
 
 export function playerSpeed(player, now) {
-  return player.speedUntil > now ? GAME.baseSpeed * 1.6 : GAME.baseSpeed;
+  const base = player.baseSpeed ?? GAME.baseSpeed;
+  return player.speedUntil > now ? base * 1.6 : base;
 }
 
 function moveAxis(state, player, axis, distance) {
@@ -285,7 +293,7 @@ function captureLoop(state, player, closingCell) {
   breached.sort((a, b) => a.distance - b.distance || a.k.localeCompare(b.k));
   const capturedCells = capturable.slice(0, captureLimit).map(({ k }) => k);
   for (const packed of capturedCells) player.territory.add(packed);
-  const breachCells = breached.slice(0, GAME.maxBreachCells);
+  const breachCells = breached.slice(0, state.rules?.maxBreachCells ?? GAME.maxBreachCells);
   for (const { k, rival } of breachCells) { rival.territory.delete(k); player.territory.add(k); }
   const claimed = capturedCells.length + breachCells.length;
   player.trail = []; player.trailSet.clear(); player.trailStart = null;
@@ -320,7 +328,7 @@ function traceTrail(state, player) {
 }
 
 function loseTerritory(state, player) {
-  const target = Math.max(1, Math.floor(player.territory.size * GAME.penaltyFraction));
+  const target = Math.max(1, Math.floor(player.territory.size * (state.rules?.penaltyFraction ?? GAME.penaltyFraction)));
   const candidates = [...player.territory].filter((k) => {
     const [x, y] = parseKey(k);
     return Math.abs(x - player.base.x) > 2 || Math.abs(y - player.base.y) > 2;
@@ -424,17 +432,22 @@ export function tickGame(state, now = Date.now()) {
   state.lastTickAt = now;
   tickPowerUps(state, now);
   tickCrown(state, now);
-  for (const player of state.players) if (player.connected) movePlayer(state, player, dt, now);
-  for (const player of state.players) if (player.connected) collectPowerUps(state, player, now);
-  for (const player of state.players) if (player.connected && player.freezeUntil <= now) traceTrail(state, player);
-  // Detect every cut before applying any, so simultaneous cuts hit both players instead of favoring player one.
-  const cuts = state.players.map((toucher, i) => {
-    const victim = state.players[1 - i], position = cellAt(state, toucher.x, toucher.y), cell = key(position.x, position.y);
-    const touching = victim.trailSet.has(cell), fresh = touching && !toucher.touchingTrail;
-    toucher.touchingTrail = touching;
-    return fresh ? { victim, cell } : null;
-  });
-  for (const cut of cuts) if (cut) penalize(state, cut.victim, now, cut.cell);
+  // Split fast ticks so nobody moves more than ~3/4 of a cell per step and trails never skip a cell.
+  const fastest = Math.max(...state.players.map((player) => playerSpeed(player, now)));
+  const subSteps = Math.max(1, Math.ceil(fastest * dt / (state.cellSize * 0.75)));
+  for (let step = 0; step < subSteps; step++) {
+    for (const player of state.players) if (player.connected) movePlayer(state, player, dt / subSteps, now);
+    for (const player of state.players) if (player.connected) collectPowerUps(state, player, now);
+    for (const player of state.players) if (player.connected && player.freezeUntil <= now) traceTrail(state, player);
+    // Detect every cut before applying any, so simultaneous cuts hit both players instead of favoring player one.
+    const cuts = state.players.map((toucher, i) => {
+      const victim = state.players[1 - i], position = cellAt(state, toucher.x, toucher.y), cell = key(position.x, position.y);
+      const touching = victim.trailSet.has(cell), fresh = touching && !toucher.touchingTrail;
+      toucher.touchingTrail = touching;
+      return fresh ? { victim, cell } : null;
+    });
+    for (const cut of cuts) if (cut) penalize(state, cut.victim, now, cut.cell);
+  }
   if (now >= state.endsAt) {
     const [a, b] = state.players.map(matchScore);
     state.finished = true; state.draw = a === b;

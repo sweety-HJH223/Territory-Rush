@@ -109,7 +109,7 @@ function handleMessage(message) {
   if (message.type === "match-start") {
     matchStarted = true; opponentLeft = false; lobby.classList.add("hidden"); gameView.classList.remove("hidden");
     $("#resultOverlay").classList.add("hidden"); $("#rematchButton").disabled = false; $("#rematchButton").textContent = "Rematch";
-    resetMatchFx(); previousTerritory = null; previousEffects.clear(); finalReplayDone = false; clearTimeout(finalReplayTimer); activeReplay = null; dailyReplay = null; $("#replayOverlay").classList.add("hidden"); $("#skipReplay").textContent = "Skip"; $("#matchMode").textContent = message.mode === "daily" ? "DAILY CHALLENGE" : "1V1 ARENA"; startMusic();
+    resetMatchFx(); previousTerritory = null; previousEffects.clear(); finalReplayDone = false; clearTimeout(finalReplayTimer); activeReplay = null; dailyReplay = null; $("#replayOverlay").classList.add("hidden"); $("#skipReplay").textContent = "Skip"; $("#matchMode").textContent = message.mode === "daily" ? "DAILY CHALLENGE" : `1V1 ARENA · ${String(message.difficulty || "normal").toUpperCase()}`; startMusic();
   }
   if (message.type === "state") { state = message; updateTargets(); if (message.status === "finished" || message.finished || message.status === "disconnected") showResult(message); }
   if (message.type === "rematch-pending") {
@@ -152,6 +152,7 @@ function renderLobby(message) {
     return `<div class="player-row"><span class="mini-dot" style="--color:${p.color || "#697487"}"></span><bdi>${escapeHtml(p.name)}</bdi><small>${escapeHtml(char?.name || status)} · ${status}</small></div>`;
   }).join("");
   const versusBot = message.players.some((p) => p.bot);
+  paintDifficulty("room", message.difficulty || "normal", !versusBot && !isHost);
   readyButton.classList.toggle("hidden", !message.hostPlayerId || isHost || versusBot);
   readyButton.disabled = !me?.character;
   readyButton.textContent = me?.ready ? "Ready ✓" : "Ready";
@@ -192,7 +193,7 @@ function startDailyReplay(message) {
   const paintable = replay.map.width * replay.map.height - replay.map.walls.flat().filter(Boolean).length;
   for (const player of players) player.territoryPercent = paintable ? player.territory.size / paintable * 100 : 0;
   targets.clear(); renderPositions.clear();
-  players.forEach((p) => { targets.set(p.id, { x: p.x, y: p.y }); renderPositions.set(p.id, { x: p.x, y: p.y }); });
+  players.forEach((p) => setTarget(p.id, p.x, p.y, true));
   $("#lobby").classList.add("hidden"); gameView.classList.remove("hidden");
   $("#resultOverlay").classList.add("hidden"); $("#replayTitle").textContent = `TOP DAILY RUN · ${isolate(message.entry.name)} · ${message.entry.score} PTS`;
   $("#replayOverlay").classList.remove("hidden"); $("#skipReplay").textContent = "Exit replay"; $("#matchMode").textContent = "TOP DAILY RUN";
@@ -220,7 +221,7 @@ function advanceDailyReplay() {
     const paintable = state.map.width * state.map.height - state.map.walls.flat().filter(Boolean).length;
     player.territoryPercent = paintable ? player.territory.size / paintable * 100 : 0;
     player.stats.crownPoints = a.crown?.points[index] || 0;
-    targets.set(player.id, { x: player.x, y: player.y });
+    setTarget(player.id, player.x, player.y, true);
     const card = $(`#score${index}`); if (card) { card.querySelector(".score-name").textContent = player.name; card.querySelector(".score-value").textContent = `${player.territoryPercent.toFixed(1)}%`; card.querySelector(".score-crown").textContent = `♛ ${player.stats.crownPoints}`; }
   });
   state.remainingMs = 180_000 - elapsed;
@@ -245,8 +246,29 @@ function playerName() {
   return name || "Player";
 }
 function isolate(name) { return `\u2068${name}\u2069`; }
-createButton.addEventListener("click", () => { setError(""); send("create-room", { name: playerName() }); });
-botButton.addEventListener("click", () => { setError(""); send("play-bot", { name: playerName() }); });
+const DIFFICULTY_IDS = ["easy", "normal", "hard"];
+let difficulty = DIFFICULTY_IDS.includes(localStorage.getItem("tr-difficulty")) ? localStorage.getItem("tr-difficulty") : "normal";
+function paintDifficulty(scope, value, locked = false) {
+  for (const button of document.querySelectorAll(`.difficulty-options[data-scope="${scope}"] button`)) {
+    const active = button.dataset.difficulty === value;
+    button.classList.toggle("active", active); button.setAttribute("aria-checked", String(active)); button.setAttribute("role", "radio");
+    button.disabled = locked;
+    button.dataset.tip ??= button.title;
+    button.title = locked ? "Only the room host can change the difficulty" : button.dataset.tip;
+  }
+}
+paintDifficulty("lobby", difficulty);
+$('.difficulty-options[data-scope="lobby"]').addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-difficulty]");
+  if (!button) return;
+  difficulty = button.dataset.difficulty; localStorage.setItem("tr-difficulty", difficulty); paintDifficulty("lobby", difficulty);
+});
+$('.difficulty-options[data-scope="room"]').addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-difficulty]");
+  if (button && !button.disabled) { setError(""); send("set-difficulty", { difficulty: button.dataset.difficulty }); }
+});
+createButton.addEventListener("click", () => { setError(""); send("create-room", { name: playerName(), difficulty }); });
+botButton.addEventListener("click", () => { setError(""); send("play-bot", { name: playerName(), difficulty }); });
 readyButton.addEventListener("click", () => { setError(""); send("player-ready", { ready: true }); });
 startButton.addEventListener("click", () => { setError(""); send("start-match"); });
 $("#dailyButton").addEventListener("click", () => { setError(""); send("daily-challenge", { name: playerName(), playerKey: dailyPlayerKey }); });
@@ -265,9 +287,9 @@ roomCodeInput.addEventListener("keydown", (event) => { if (event.key === "Enter"
 function updateTargets() {
   if (!state?.players) return;
   trackTerritoryChanges();
+  noteSnapshotArrival();
   state.players.forEach((player, index) => {
-    targets.set(player.id, { x: player.x, y: player.y });
-    if (!renderPositions.has(player.id)) renderPositions.set(player.id, { x: player.x, y: player.y });
+    setTarget(player.id, player.x, player.y);
     const card = $(`#score${index}`);
     if (card) {
       card.style.setProperty("--player-color", player.color);
@@ -567,14 +589,16 @@ function draw(time = 0) {
     }
   }
   // Trace the perimeter of each painted region as a continuous luminous edge.
+  // Edges sit just inside the owner's cells so two rivals sharing a border each keep their own color.
+  const inset = 1.25, far = cellSize - inset;
   for (const player of players) {
     ctx.beginPath();
     for (const packed of player.territory) {
       const [x, y] = parseCell(packed), px = x * cellSize, py = y * cellSize;
-      if (ownerByCell.get(`${x},${y - 1}`) !== player) { ctx.moveTo(px, py); ctx.lineTo(px + cellSize, py); }
-      if (ownerByCell.get(`${x + 1},${y}`) !== player) { ctx.moveTo(px + cellSize, py); ctx.lineTo(px + cellSize, py + cellSize); }
-      if (ownerByCell.get(`${x},${y + 1}`) !== player) { ctx.moveTo(px, py + cellSize); ctx.lineTo(px + cellSize, py + cellSize); }
-      if (ownerByCell.get(`${x - 1},${y}`) !== player) { ctx.moveTo(px, py); ctx.lineTo(px, py + cellSize); }
+      if (ownerByCell.get(`${x},${y - 1}`) !== player) { ctx.moveTo(px, py + inset); ctx.lineTo(px + cellSize, py + inset); }
+      if (ownerByCell.get(`${x + 1},${y}`) !== player) { ctx.moveTo(px + far, py); ctx.lineTo(px + far, py + cellSize); }
+      if (ownerByCell.get(`${x},${y + 1}`) !== player) { ctx.moveTo(px, py + far); ctx.lineTo(px + cellSize, py + far); }
+      if (ownerByCell.get(`${x - 1},${y}`) !== player) { ctx.moveTo(px + inset, py); ctx.lineTo(px + inset, py + cellSize); }
     }
     ctx.strokeStyle = colorAlpha(player.color, .72); ctx.lineWidth = 1.5; ctx.shadowColor = colorAlpha(player.color, .55); ctx.shadowBlur = 5; ctx.stroke(); ctx.shadowBlur = 0;
   }
@@ -669,13 +693,28 @@ function draw(time = 0) {
   vignette.addColorStop(0, "#050b1400"); vignette.addColorStop(1, "#050b1433");
   ctx.fillStyle = vignette; ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
-function interpolate(id, x, y) {
-  const target = targets.get(id) || { x, y };
-  const rendered = renderPositions.get(id) || { x: target.x, y: target.y };
+// Glide at a constant pace from where the player is drawn to the newest server position, spread over one
+// snapshot interval, so motion stays even instead of surging and pausing between 20 Hz updates.
+let snapshotInterval = 50, lastSnapshotAt = 0;
+function setTarget(id, x, y, instant = false) {
+  const now = performance.now(), rendered = renderPositions.get(id);
+  const from = !instant && rendered ? { x: rendered.x, y: rendered.y } : { x, y };
   // Large jumps are respawns; snap instead of sliding across the maze.
-  if (Math.hypot(target.x - rendered.x, target.y - rendered.y) > 60) { rendered.x = target.x; rendered.y = target.y; motionTrails.delete(id); }
-  rendered.x += (target.x - rendered.x) * .5;
-  rendered.y += (target.y - rendered.y) * .5;
+  if (Math.hypot(x - from.x, y - from.y) > 60) { from.x = x; from.y = y; motionTrails.delete(id); }
+  targets.set(id, { fromX: from.x, fromY: from.y, x, y, at: now });
+  if (!rendered) renderPositions.set(id, { x: from.x, y: from.y });
+}
+function noteSnapshotArrival() {
+  const now = performance.now();
+  if (lastSnapshotAt) snapshotInterval += (Math.min(120, Math.max(25, now - lastSnapshotAt)) - snapshotInterval) * .2;
+  lastSnapshotAt = now;
+}
+function interpolate(id, x, y) {
+  const target = targets.get(id) || { fromX: x, fromY: y, x, y, at: 0 };
+  const rendered = renderPositions.get(id) || { x: target.x, y: target.y };
+  const progress = Math.min(1, (performance.now() - target.at) / snapshotInterval);
+  rendered.x = target.fromX + (target.x - target.fromX) * progress;
+  rendered.y = target.fromY + (target.y - target.fromY) * progress;
   renderPositions.set(id, rendered);
   return rendered;
 }
