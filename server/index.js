@@ -125,13 +125,13 @@ function makeCode() {
 }
 
 function playerList(room) {
-  const humans = [...room.players.values()].map((p) => ({ id: p.id, name: p.name, character: p.character, color: p.color, ready: Boolean(p.character) }));
+  const humans = [...room.players.values()].map((p) => ({ id: p.id, name: p.name, character: p.character, color: p.color, hasCharacter: Boolean(p.character), ready: Boolean(p.ready) }));
   if (room.botEnabled && room.bot) humans.push({ ...room.bot, ready: true, bot: true });
   return humans;
 }
 
 function lobbyUpdate(room) {
-  broadcast(room, "lobby", { code: room.code, status: room.status, players: playerList(room) });
+  broadcast(room, "lobby", { code: room.code, status: room.status, hostPlayerId: room.hostPlayerId || null, players: playerList(room) });
 }
 
 function sendSnapshot(room) {
@@ -207,7 +207,8 @@ function handleMessage(socket, message) {
     return;
   }
   if (message.type === "play-bot") {
-    if (session) return send(socket, "error", { message: "This connection is already in a room." });
+    if (session && (message.type !== "join-room" || session.room.status !== "waiting")) return send(socket, "error", { message: "This connection is already in a room." });
+    
     const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, botEnabled: true, cleanupTimer: null };
     rooms.set(room.code, room);
     const human = addPlayer(room, socket, message.name);
@@ -218,19 +219,27 @@ function handleMessage(socket, message) {
     return;
   }
   if (message.type === "create-room") {
-    if (session) return send(socket, "error", { message: "This connection is already in a room." });
+    if (session && (message.type !== "join-room" || session.room.status !== "waiting")) return send(socket, "error", { message: "This connection is already in a room." });
     const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, cleanupTimer: null };
     rooms.set(room.code, room);
-    addPlayer(room, socket, message.name);
-    send(socket, "room-created", { code: room.code, playerId: [...room.players.keys()][0], characters });
+    const host = addPlayer(room, socket, message.name);
+    room.hostPlayerId = host.id;
+    send(socket, "room-created", { code: room.code, playerId: host.id, characters });
     lobbyUpdate(room);
     return;
   }
   if (message.type === "join-room") {
-    if (session) return send(socket, "error", { message: "This connection is already in a room." });
+    if (session && (message.type !== "join-room" || session.room.status !== "waiting")) return send(socket, "error", { message: "This connection is already in a room." });
     const code = String(message.code || "").trim().toUpperCase();
     const room = rooms.get(code);
-    if (!room || room.status !== "waiting" || room.botEnabled || room.players.size >= 2) return send(socket, "error", { message: "Room not found or already in a match." });
+    if (!room || room.status !== "waiting" || room.botEnabled) return send(socket, "error", { message: "Room not found or already in a match." });
+    if (session?.room === room) {
+      send(socket, "room-joined", { code: room.code, playerId: session.player.id, characters });
+      lobbyUpdate(room);
+      return;
+    }
+    if (room.players.size >= 2) return send(socket, "error", { message: "Room not found or already in a match." });
+    if (session) disconnect(socket);
     const player = addPlayer(room, socket, message.name);
     send(socket, "room-joined", { code: room.code, playerId: player.id, characters });
     lobbyUpdate(room);
@@ -238,6 +247,22 @@ function handleMessage(socket, message) {
   }
   if (!session) return send(socket, "error", { message: "Create or join a room first." });
   const { room, player } = session;
+  if (message.type === "player-ready" && room.status === "waiting" && !room.botEnabled) {
+    if (!player.character) return send(socket, "error", { message: "Choose a character before you get ready." });
+    player.ready = Boolean(message.ready);
+    lobbyUpdate(room);
+    return;
+  }
+  if (message.type === "start-match") {
+    if (room.status !== "waiting" || room.botEnabled) return;
+    if (player.id !== room.hostPlayerId) return send(socket, "error", { message: "Only the room host can start the match." });
+    const rival = [...room.players.values()].find((other) => other.id !== player.id);
+    if (room.players.size !== 2 || !player.character || !rival?.character || !rival.ready) {
+      return send(socket, "error", { message: "Your opponent needs to choose a character and get ready first." });
+    }
+    startMatch(room);
+    return;
+  }
   if (message.type === "select-character") {
     if (room.status !== "waiting") return;
     const selected = characters.find((character) => character.id === message.characterId);
@@ -247,9 +272,9 @@ function handleMessage(socket, message) {
     if (alreadyTaken) return send(socket, "error", { message: "That character is already taken. Choose a different one." });
     player.character = selected.id;
     player.color = selected.color;
+    player.ready = false;
     lobbyUpdate(room);
     if (room.botEnabled && player.character) startMatch(room);
-    else if (room.players.size === 2 && [...room.players.values()].every((p) => p.character)) startMatch(room);
     return;
   }
   if (message.type === "rematch" && room.status === "finished") {
