@@ -544,3 +544,74 @@ function interpolate(id, x, y) {
 }
 requestAnimationFrame(draw);
 connect();
+
+
+// Show room code and character selection in a focused, dismissible lobby popup.
+const roomStatusButton = document.createElement("button");
+roomStatusButton.type = "button";
+roomStatusButton.className = "button secondary hidden room-status-button";
+roomStatusButton.setAttribute("aria-label", "Show room code and character selection");
+$(".room-actions").append(roomStatusButton);
+const roomPanelTop = document.createElement("div");
+roomPanelTop.className = "room-panel-top";
+roomPanelTop.innerHTML = '<div><span class="eyebrow">ROOM LOBBY</span><h2>Invite a rival</h2></div>';
+const minimizeRoomButton = document.createElement("button");
+minimizeRoomButton.type = "button";
+minimizeRoomButton.className = "button quiet";
+minimizeRoomButton.textContent = "Minimize";
+minimizeRoomButton.setAttribute("aria-label", "Minimize room lobby");
+roomPanelTop.append(minimizeRoomButton);
+roomPanel.prepend(roomPanelTop);
+const roomCodeBlock = $("#roomCodeLabel").parentElement;
+roomCodeBlock.classList.add("room-code-block");
+const copyRoomCodeButton = document.createElement("button");
+copyRoomCodeButton.type = "button";
+copyRoomCodeButton.className = "button quiet copy-room-code";
+copyRoomCodeButton.textContent = "COPY CODE";
+copyRoomCodeButton.setAttribute("aria-label", "Copy room code");
+$("#roomCodeLabel").insertAdjacentElement("afterend", copyRoomCodeButton);
+let roomPopupMinimized = false;
+function minimizeRoomPopup() {
+  roomPopupMinimized = true;
+  roomPanel.classList.add("hidden");
+  if (roomCode && !matchStarted) {
+    roomStatusButton.textContent = `ROOM ${roomCode} · OPEN`;
+    roomStatusButton.classList.remove("hidden");
+  }
+}
+minimizeRoomButton.addEventListener("click", minimizeRoomPopup);
+roomStatusButton.addEventListener("click", () => {
+  roomPopupMinimized = false;
+  roomPanel.classList.remove("hidden");
+  roomStatusButton.classList.add("hidden");
+});
+copyRoomCodeButton.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(roomCode || $("#roomCodeLabel").textContent);
+    copyRoomCodeButton.textContent = "COPIED!";
+    setTimeout(() => { copyRoomCodeButton.textContent = "COPY CODE"; }, 1400);
+  } catch {
+    copyRoomCodeButton.textContent = "SELECT CODE";
+  }
+});
+socket.addEventListener("message", (event) => {
+  let message;
+  try { message = JSON.parse(event.data); } catch { return; }
+  if (message.type === "room-created" || message.type === "room-joined") {
+    roomPopupMinimized = false;
+    if (message.daily) {
+      roomPanel.classList.add("hidden");
+      roomStatusButton.classList.add("hidden");
+    } else {
+      roomStatusButton.textContent = `ROOM ${message.code} · OPEN`;
+      roomStatusButton.classList.add("hidden");
+      roomPanel.classList.remove("hidden");
+    }
+  }
+  if (message.type === "lobby" && roomPopupMinimized) roomPanel.classList.add("hidden");
+  if (message.type === "match-start") {
+    roomPopupMinimized = false;
+    roomPanel.classList.add("hidden");
+    roomStatusButton.classList.add("hidden");
+  }
+});
