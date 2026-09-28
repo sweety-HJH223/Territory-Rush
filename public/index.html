@@ -43,7 +43,7 @@
               <input id="roomCode" maxlength="5" autocomplete="off" placeholder="ROOM CODE" aria-label="Room code" />
               <button id="joinButton" class="button secondary" disabled>Join</button>
             </div>
-            <div class="action-note">Open a second browser tab to play against a friend.</div>
+            <div class="action-note">Share your room code. Your friend can join from any device using this link.</div>
           </div>
           <div id="roomPanel" class="room-panel hidden">
             <div class="room-heading"><div><span class="label">ROOM CODE</span><strong id="roomCodeLabel">-----</strong></div><span class="waiting-pill"><i></i> WAITING</span></div>
@@ -51,7 +51,11 @@
             <div id="characterTitle" class="label character-title">CHOOSE YOUR CHARACTER</div>
             <div id="characters" class="characters"></div>
             <div id="playersList" class="players-list"></div>
-            <p id="readyHint" class="ready-hint">Pick a character to ready up.</p>
+            <p id="readyHint" class="ready-hint">Choose your character, then get ready. The host starts the match when both players are ready.</p>
+            <div class="room-controls">
+              <button id="readyButton" class="button secondary hidden" disabled>Ready</button>
+              <button id="startButton" class="button primary hidden" disabled>Start Match</button>
+            </div>
           </div>
           <div id="errorMessage" class="error-message hidden"></div>
         </div>
