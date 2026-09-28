@@ -37,3 +37,7 @@ body:has(.room-panel:not(.hidden)){overflow:hidden}
 .room-heading{align-items:center;gap:10px}.room-heading>div.room-code-block{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}.room-code-block .label{flex-basis:100%}.room-code-block strong{font:600 28px 'DM Mono',monospace;letter-spacing:.18em;color:#82f6d4}.copy-room-code{padding:8px 10px;font-size:8px}.room-heading>.waiting-pill{white-space:nowrap}.room-panel .share-note{margin:9px 0 18px;color:#a6b5c4;font-size:11px}.room-panel .players-list{margin-top:14px}.room-panel .ready-hint{margin-bottom:0}.room-status-button{width:100%;margin-top:4px}
 @keyframes room-modal-in{from{opacity:0;transform:translate(-50%,-48%) scale(.97)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
 @media(max-width:560px){.room-panel:not(.hidden){width:calc(100vw - 22px);max-height:calc(100dvh - 22px);padding:17px}.room-panel-top h2{font-size:19px}.room-code-block strong{font-size:23px}.room-heading{align-items:flex-start}}
+
+
+/* Transparent canvas for animated character portraits in the score HUD. */
+.score-avatar{background:transparent;border-radius:0;box-shadow:none;filter:drop-shadow(0 0 8px color-mix(in srgb,var(--player-color,var(--mint)),transparent 42%))}
