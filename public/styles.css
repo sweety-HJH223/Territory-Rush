@@ -41,3 +41,6 @@ body:has(.room-panel:not(.hidden)){overflow:hidden}
 
 /* Transparent canvas for animated character portraits in the score HUD. */
 .score-avatar{background:transparent;border-radius:0;box-shadow:none;filter:drop-shadow(0 0 8px color-mix(in srgb,var(--player-color,var(--mint)),transparent 42%))}
+
+.room-controls{display:flex;gap:10px;margin-top:14px}.room-controls .button{flex:1}
+.score-avatar{display:block;flex:none;width:48px;height:48px}
