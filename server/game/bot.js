@@ -1,4 +1,4 @@
-import { cellAt, setPlayerInput } from "./core.js";
+import { GAME, cellAt, playerSpeed, setPlayerInput } from "./core.js";
 
 const id = (x, y) => `${x},${y}`;
 const point = (value) => value.split(",").map(Number);
@@ -72,7 +72,9 @@ export function updateBotInput(game, now = Date.now()) {
   if (!bot || game.finished) return;
   const opponent = game.players.find((player) => player !== bot);
   const cell = cellAt(game, bot.x, bot.y);
-  if (bot.route?.length && Math.abs(bot.x - (bot.route[0].x + 0.5) * game.cellSize) < 4.5 && Math.abs(bot.y - (bot.route[0].y + 0.5) * game.cellSize) < 4.5) bot.route.shift();
+  // A tick moves a whole step, so tolerances under half a step make the bot overshoot back and forth forever.
+  const step = playerSpeed(bot, now) * GAME.tickMs / 1000, aim = Math.max(3, step / 2 + 0.5), arrive = aim + 1.5;
+  if (bot.route?.length && Math.abs(bot.x - (bot.route[0].x + 0.5) * game.cellSize) < arrive && Math.abs(bot.y - (bot.route[0].y + 0.5) * game.cellSize) < arrive) bot.route.shift();
   if (!bot.route?.length) {
     bot.route = chooseRoute(game, bot, opponent, now);
   }
@@ -80,7 +82,7 @@ export function updateBotInput(game, now = Date.now()) {
   if (!waypoint) { setPlayerInput(game, bot.id, {}); return; }
   const tx = (waypoint.x + 0.5) * game.cellSize, ty = (waypoint.y + 0.5) * game.cellSize;
   const input = {};
-  if (Math.abs(tx - bot.x) > 3 || Math.abs(ty - bot.y) > 3) {
+  if (Math.abs(tx - bot.x) > aim || Math.abs(ty - bot.y) > aim) {
     if (Math.abs(tx - bot.x) >= Math.abs(ty - bot.y)) input[tx > bot.x ? "right" : "left"] = true;
     else input[ty > bot.y ? "down" : "up"] = true;
   }

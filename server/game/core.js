@@ -86,25 +86,47 @@ export function createGame({ players, seed = Math.random, now = Date.now(), star
     nextPowerUpAt: now + startDelayMs + 6_000 + Math.floor(seed() * 3_001),
   };
   state.players.forEach((p) => paintBase(state, p));
-  state.crown.cell = findCrownCell(state, Math.floor(width / 2), Math.floor(height / 2));
+  state.crown.cell = fairCrownCell(state, { near: { x: width / 2, y: height / 2 } });
   return state;
 }
 
-function findCrownCell(state, targetX, targetY) {
-  const occupied = new Set(state.players.flatMap((player) => [...player.territory]));
-  const choices = [], fallback = [];
-  for (let y = 1; y < state.height - 1; y++) for (let x = 1; x < state.width - 1; x++) {
-    const packed = key(x, y);
-    if (!state.walls[y][x]) {
-      const choice = { x, y, d: (x - targetX) ** 2 + (y - targetY) ** 2 };
-      fallback.push(choice);
-      if (!occupied.has(packed)) choices.push(choice);
+function walkDistances(state, from) {
+  const distance = Array.from({ length: state.height }, () => Array(state.width).fill(Infinity));
+  const queue = [from];
+  distance[from.y][from.x] = 0;
+  for (let i = 0; i < queue.length; i++) {
+    const { x, y } = queue[i];
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (!inBounds(state, nx, ny) || state.walls[ny][nx] || distance[ny][nx] !== Infinity) continue;
+      distance[ny][nx] = distance[y][x] + 1;
+      queue.push({ x: nx, y: ny });
     }
   }
-  choices.sort((a, b) => a.d - b.d);
-  const cell = choices[0] || fallback.sort((a, b) => a.d - b.d)[0];
-  if (!cell) return { x: targetX, y: targetY };
-  if (!choices.length) for (const player of state.players) player.territory.delete(key(cell.x, cell.y));
+  return distance;
+}
+
+// Fair means the same walking distance through the maze from both bases, not straight-line distance.
+function fairCrownCell(state, { near, awayFrom } = {}) {
+  const [fromA, fromB] = state.players.map((player) => walkDistances(state, player.base));
+  const occupied = new Set(state.players.flatMap((player) => [...player.territory]));
+  const cells = [];
+  for (let y = 1; y < state.height - 1; y++) for (let x = 1; x < state.width - 1; x++) {
+    if (state.walls[y][x] || fromA[y][x] === Infinity || fromB[y][x] === Infinity) continue;
+    cells.push({ x, y, gap: Math.abs(fromA[y][x] - fromB[y][x]), free: !occupied.has(key(x, y)) });
+  }
+  if (!cells.length) return { x: Math.floor(state.width / 2), y: Math.floor(state.height / 2) };
+  const bestGap = Math.min(...cells.map((cell) => cell.gap));
+  let pool = cells.filter((cell) => cell.gap <= bestGap + 1);
+  if (awayFrom) {
+    const distant = pool.filter((cell) => Math.abs(cell.x - awayFrom.x) + Math.abs(cell.y - awayFrom.y) >= 10);
+    if (distant.length) pool = distant;
+  }
+  if (pool.some((cell) => cell.free)) pool = pool.filter((cell) => cell.free);
+  const cell = near
+    ? pool.sort((a, b) => ((a.x - near.x) ** 2 + (a.y - near.y) ** 2) - ((b.x - near.x) ** 2 + (b.y - near.y) ** 2) || a.y - b.y || a.x - b.x)[0]
+    : pool[Math.floor(state.random() * pool.length)];
+  if (!cell.free) for (const player of state.players) player.territory.delete(key(cell.x, cell.y));
   return { x: cell.x, y: cell.y };
 }
 
@@ -118,7 +140,7 @@ function tickCrown(state, now) {
   const crown = state.crown;
   if (!crown.active && now >= crown.activateAt) {
     crown.active = true;
-    crown.cell = findCrownCell(state, Math.floor(state.width / 2), Math.floor(state.height / 2));
+    crown.cell = fairCrownCell(state, { near: { x: state.width / 2, y: state.height / 2 } });
     state.effects.push({ type: "crown-active", cell: crown.cell });
   }
   if (crown.active && crown.moveAt && now >= crown.moveAt - 5_000 && !crown.moveAnnounced) {
@@ -126,7 +148,7 @@ function tickCrown(state, now) {
     state.effects.push({ type: "crown-moving", inMs: Math.max(0, crown.moveAt - now) });
   }
   if (crown.active && crown.moveAt && now >= crown.moveAt) {
-    crown.cell = findCrownCell(state, Math.floor(state.width * .78), Math.floor(state.height * .78));
+    crown.cell = fairCrownCell(state, { awayFrom: crown.cell });
     crown.moveAt = null;
     crown.ownerId = null;
     crown.nextPointAt = null;
@@ -172,17 +194,28 @@ function collidesWithWall(state, x, y) {
   return false;
 }
 
+export function playerSpeed(player, now) {
+  return player.speedUntil > now ? GAME.baseSpeed * 1.6 : GAME.baseSpeed;
+}
+
+function moveAxis(state, player, axis, distance) {
+  // Small sub-steps let players slide flush against walls instead of stopping a whole step short.
+  const steps = Math.ceil(Math.abs(distance) / 2), step = distance / steps;
+  for (let i = 0; i < steps; i++) {
+    const nx = axis === "x" ? player.x + step : player.x, ny = axis === "y" ? player.y + step : player.y;
+    if (collidesWithWall(state, nx, ny)) return;
+    player.x = nx; player.y = ny;
+  }
+}
+
 function movePlayer(state, player, dt, now) {
   const input = player.input;
   const dx = Number(input.right) - Number(input.left), dy = Number(input.down) - Number(input.up);
   if (!dx && !dy) return;
-  const length = Math.hypot(dx, dy), speed = player.speedUntil > now ? GAME.baseSpeed * 1.6 : GAME.baseSpeed;
-  const mx = dx / length * speed * dt, my = dy / length * speed * dt;
+  const length = Math.hypot(dx, dy), speed = playerSpeed(player, now);
   // Axis-separated collision allows sliding along walls.
-  const nx = player.x + mx;
-  if (!collidesWithWall(state, nx, player.y)) player.x = nx;
-  const ny = player.y + my;
-  if (!collidesWithWall(state, player.x, ny)) player.y = ny;
+  if (dx) moveAxis(state, player, "x", dx / length * speed * dt);
+  if (dy) moveAxis(state, player, "y", dy / length * speed * dt);
 }
 
 function otherOwner(state, player, cell) {
@@ -394,13 +427,14 @@ export function tickGame(state, now = Date.now()) {
   for (const player of state.players) if (player.connected) movePlayer(state, player, dt, now);
   for (const player of state.players) if (player.connected) collectPowerUps(state, player, now);
   for (const player of state.players) if (player.connected && player.freezeUntil <= now) traceTrail(state, player);
-  for (let i = 0; i < state.players.length; i++) {
-    const toucher = state.players[i], victim = state.players[1 - i];
-    const position = cellAt(state, toucher.x, toucher.y);
-    const touching = victim.trailSet.has(key(position.x, position.y));
-    if (touching && !toucher.touchingTrail) penalize(state, victim, now, key(position.x, position.y));
+  // Detect every cut before applying any, so simultaneous cuts hit both players instead of favoring player one.
+  const cuts = state.players.map((toucher, i) => {
+    const victim = state.players[1 - i], position = cellAt(state, toucher.x, toucher.y), cell = key(position.x, position.y);
+    const touching = victim.trailSet.has(cell), fresh = touching && !toucher.touchingTrail;
     toucher.touchingTrail = touching;
-  }
+    return fresh ? { victim, cell } : null;
+  });
+  for (const cut of cuts) if (cut) penalize(state, cut.victim, now, cut.cell);
   if (now >= state.endsAt) {
     const [a, b] = state.players.map(matchScore);
     state.finished = true; state.draw = a === b;

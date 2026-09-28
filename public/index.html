@@ -7,6 +7,9 @@
     <meta name="description" content="Draw risky loops, breach rival territory, and fight for the Crown in Territory Rush." />
     <title>Territory Rush</title>
     <link rel="icon" type="image/svg+xml" href="/assets/territory-mark.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@500;600;700&display=swap" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -21,21 +24,21 @@
           <div class="eyebrow">CLAIM THE MAP. HOLD YOUR GROUND.</div>
           <h1>Every move<br />makes <em>your mark.</em></h1>
           <p>Draw a loop to claim territory. Keep your trail safe, and watch your rival’s back.</p>
-          <div class="hero-art-wrap"><img class="hero-art" src="/assets/arena-poster.svg" alt="A glowing maze arena split between rival territories" /><span class="hero-art-caption"><i></i> ONE ARENA · TWO RIVALS · NO SAFE TRAILS</span></div>
-        </div>
-        <div class="lobby-card">
           <section class="lobby-howto" aria-label="How to play before starting">
             <span class="eyebrow">QUICK START</span>
             <p><b>Move with WASD.</b> Leave your color, draw a loop, then return to your color to claim the tiles inside. Your trail is exposed until you get back.</p>
             <small><b>Pickups:</b> Speed moves you faster · Shield blocks one trail cut · Freeze stops the rival drawing for 3 seconds · Bonus claims up to 9 nearby unclaimed tiles.</small>
           </section>
+          <div class="hero-art-wrap"><img class="hero-art" src="/assets/arena-poster.svg" alt="A glowing maze arena split between rival territories" /><span class="hero-art-caption"><i></i> ONE ARENA · TWO RIVALS · NO SAFE TRAILS</span></div>
+        </div>
+        <div class="lobby-card">
           <div id="connectStatus" class="connect-status"><span class="status-dot"></span> Connecting to arena…</div>
           <div class="room-actions">
+            <label class="name-field" for="playerName"><span class="name-head"><span class="label">YOUR NAME</span><small>Any language · up to 18 characters</small></span><input id="playerName" maxlength="60" autocomplete="nickname" dir="auto" spellcheck="false" placeholder="Enter your name" /></label>
             <button id="createButton" class="button primary" disabled><span>＋</span> Create Room</button>
             <button id="botButton" class="button secondary" disabled>Play vs Bot <small>SOLO CHALLENGE</small></button>
             <section class="daily-challenge-panel">
-              <div class="daily-heading"><span><b>DAILY SEED</b><small>Same arena for everyone today</small></span><span id="dailyDate" class="daily-date">LOADING</span></div>
-              <div class="daily-start-row"><input id="dailyName" maxlength="18" autocomplete="nickname" placeholder="PLAYER NAME" aria-label="Daily leaderboard name" /><button id="dailyButton" class="button primary" disabled>Play today’s run</button></div>
+              <div class="daily-heading"><span><b>DAILY SEED <span id="dailyDate" class="daily-date">LOADING</span></b><small>Same arena for everyone today</small></span><button id="dailyButton" class="button primary" disabled>Play today’s run</button></div>
               <div class="daily-board-heading"><b>TOP RUNS</b><small>Score = cells + 4 per Crown point</small></div>
               <div id="dailyLeaderboard" class="daily-leaderboard"><small>Loading today’s board…</small></div>
             </section>
@@ -43,7 +46,7 @@
               <input id="roomCode" maxlength="5" autocomplete="off" placeholder="ROOM CODE" aria-label="Room code" />
               <button id="joinButton" class="button secondary" disabled>Join</button>
             </div>
-            <div class="action-note">Share your room code. Your friend can join from any device using this link.</div>
+            <div class="action-note">Got a code from a friend? Enter it to join their room.</div>
           </div>
           <div id="roomPanel" class="room-panel hidden">
             <div class="room-heading"><div><span class="label">ROOM CODE</span><strong id="roomCodeLabel">-----</strong></div><span class="waiting-pill"><i></i> WAITING</span></div>
@@ -73,14 +76,15 @@
           <button id="leaveButton" class="button quiet">Leave match</button>
         </div>
         <div class="scoreboard">
-          <div class="score-card" id="score0"><span class="score-avatar"></span><span class="score-info"><small>YOU</small><b class="score-name">Player 1</b><small class="score-crown">♛ 0</small></span><strong class="score-value">0.0%</strong></div>
+          <div class="score-card" id="score0"><span class="score-avatar"></span><span class="score-info"><small>YOU</small><b class="score-name" dir="auto">Player 1</b><small class="score-crown">♛ 0</small></span><strong class="score-value">0.0%</strong></div>
           <div class="versus">VS</div>
-          <div class="score-card rival" id="score1"><span class="score-avatar"></span><span class="score-info"><small>OPPONENT</small><b class="score-name">Player 2</b><small class="score-crown">♛ 0</small></span><strong class="score-value">0.0%</strong></div>
+          <div class="score-card rival" id="score1"><span class="score-avatar"></span><span class="score-info"><small>OPPONENT</small><b class="score-name" dir="auto">Player 2</b><small class="score-crown">♛ 0</small></span><strong class="score-value">0.0%</strong></div>
         </div>
         <div class="board-frame">
           <canvas id="board" width="960" height="640" aria-label="Territory Rush maze map"></canvas>
           <div id="toast" class="toast"></div>
           <div id="countdownOverlay" class="count-overlay hidden"><strong id="countdownNumber">3</strong><span>GET READY</span></div>
+          <div id="finishBanner" class="finish-banner hidden"><strong>VICTORY</strong><span></span></div>
           <div id="replayOverlay" class="replay-overlay hidden"><span class="label">AFTER ACTION</span><strong id="replayTitle">Biggest Capture</strong><button id="skipReplay" class="button quiet">Skip</button></div>
           <div id="resultOverlay" class="result-overlay hidden"><div class="result-card"><span class="label">MATCH COMPLETE</span><h2 id="resultTitle">You win!</h2><p id="resultText"></p><div id="resultStats" class="result-stats"></div><div class="result-actions"><button id="rematchButton" class="button primary">Rematch</button><button id="backButton" class="button quiet">Back to lobby</button></div></div></div>
         </div>
@@ -95,7 +99,7 @@
           </div>
           <div class="trail-warning"><span class="warning-mark">!</span><span><b>Trail danger:</b> outside your color, your trail is exposed. If your rival touches it, you lose 12% of your territory and respawn at base. A Shield blocks one hit.</span></div>
           <div class="breach-guide"><b>BREACH CAPTURE</b><span>A loop can claim up to 9% of the arena at once. If it crosses rival land, it can steal up to 6 outer cells; bases stay protected.</span></div>
-          <div class="crown-guide"><b>THE CROWN</b><span>Activates at 1:30 and moves at 0:45. Stand on its tile for 5 seconds to score 1 Crown point. Each point adds 4 tiles to your final score.</span></div>
+          <div class="crown-guide"><b>THE CROWN</b><span>Activates at 1:30 and moves at 0:45, always to a spot equally far from both bases. Stand on its tile for 5 seconds to score 1 Crown point. Each point adds 4 tiles to your final score.</span></div>
         </section>
         <div class="game-footer"><div class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>MOVE</span></div><div>Close the loop to claim. Your trail is vulnerable until you return home.</div><div id="powerStatus" class="power-status">NO ACTIVE POWER-UPS</div></div>
       </section>

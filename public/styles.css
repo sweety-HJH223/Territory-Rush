@@ -44,3 +44,127 @@ body:has(.room-panel:not(.hidden)){overflow:hidden}
 
 .room-controls{display:flex;gap:10px;margin-top:14px}.room-controls .button{flex:1}
 .score-avatar{display:block;flex:none;width:48px;height:48px}
+
+/* Player name works for every mode; system fonts cover non-Latin scripts. */
+.name-field{display:grid;gap:6px}.name-field .label{font-size:9px;color:#82f6d4}
+.name-field input{height:44px;min-width:0;border:1px solid #343e50;background:#10151f;border-radius:9px;padding:0 14px;color:white;font:500 15px Inter,"Segoe UI",system-ui,"Noto Sans",sans-serif;outline:none}
+.name-field input:focus{border-color:var(--mint)}.name-field input::placeholder{color:#6d7a8c;font-size:12px}
+.name-field small{font-size:10px;color:#7f8c9d}
+.daily-start-row .button{flex:1}
+.score-name,.player-row bdi,.daily-row b,.result-stat bdi{font-family:Inter,"Segoe UI",system-ui,"Noto Sans",sans-serif}
+
+/* Match tension: GO flash, final-10-second alarm, and end-of-match banner. */
+.count-overlay.go{background:transparent}.count-overlay.go strong{color:#7effd6;text-shadow:0 0 30px #57e389cc,0 7px 30px #0009}.count-overlay.go span{color:#7effd6}
+.timer-box.final-countdown strong{color:#ff5d7a;text-shadow:0 0 16px #ff5d7a99;animation:timer-pulse 1s ease-in-out infinite}
+.board-frame.final-countdown::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;box-shadow:inset 0 0 70px #ff3d6a66;animation:danger-pulse 1s ease-in-out infinite}
+@keyframes timer-pulse{0%,100%{transform:scale(1)}15%{transform:scale(1.18)}}
+@keyframes danger-pulse{0%,100%{opacity:.3}15%{opacity:1}}
+.finish-banner{position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;line-height:1;pointer-events:none;background:radial-gradient(ellipse at center,#07101cd9 0,#07101c66 55%,transparent 100%)}
+.finish-banner strong{font:900 clamp(52px,11vw,124px) Inter,"Segoe UI",sans-serif;letter-spacing:.06em;color:var(--banner-color);text-shadow:0 0 34px var(--banner-color),0 8px 40px #000c;animation:banner-slam .55s cubic-bezier(.2,1.4,.4,1) both}
+.finish-banner span{font:12px 'DM Mono',monospace;letter-spacing:.3em;color:#dce4ed;animation:banner-rise .5s .25s both}
+.finish-banner.win{--banner-color:#7effd6}.finish-banner.lose{--banner-color:#ff5d7a}.finish-banner.draw{--banner-color:#ffd45c}
+@keyframes banner-slam{from{opacity:0;transform:scale(2.4)}to{opacity:1;transform:scale(1)}}
+@keyframes banner-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* Readability pass: one type scale (11px labels, 13px small text, 15px body, 16px controls) across every screen. */
+.eyebrow,.label,.connect-status,.waiting-pill,.site-footer,.feature-strip b,.game-footer,.live-tag{font-family:"DM Mono",ui-monospace,"Cascadia Mono",Consolas,monospace}
+.button,.character{font-family:"Space Grotesk",Inter,"Segoe UI",system-ui,sans-serif}
+
+/* Top bar and footer */
+.topbar{height:76px}.brand{font-size:14px}.brand-mark{width:38px;height:38px}.settings-trigger{font-size:13px;padding:10px 14px}
+.site-footer{font-size:11px;height:60px;color:#7c8a9e}
+
+/* Lobby layout */
+.lobby-view{grid-template-columns:minmax(0,1fr) minmax(380px,460px);align-items:center;gap:40px 64px;padding:44px 3% 36px}
+.hero-copy .eyebrow{font-size:12px;margin-bottom:18px}.hero-copy p{font-size:17px;line-height:1.65;max-width:440px;color:#aab6c6}
+.hero-art-caption{font:11px "DM Mono",ui-monospace,Consolas,monospace;letter-spacing:.12em}
+.lobby-card{padding:28px;border-radius:20px}
+.lobby-howto{padding:16px 18px;margin-bottom:20px;border-radius:12px}.lobby-howto .eyebrow{font-size:11px;margin-bottom:8px}.lobby-howto p{font-size:14.5px;line-height:1.6}.lobby-howto small{font-size:13px;line-height:1.55;margin-top:9px}
+.connect-status{font-size:12px;margin-bottom:18px}
+.room-actions{gap:14px}
+.name-field{gap:8px}.name-field .label{font-size:11px}.name-field input{height:50px;font-size:16px;padding:0 16px;border-radius:10px}.name-field input::placeholder{font-size:15px;color:#718096}.name-field small{font-size:12.5px}
+.room-actions>.button{min-height:52px;font-size:16px;padding:14px 18px;border-radius:10px}.secondary small{font-size:11px;margin-top:3px}
+.join-row{gap:10px}.join-row input{height:52px;font-size:15px;border-radius:10px}.join-row .button{min-width:88px}
+.action-note{font-size:13px;margin:-4px 0 0}
+.room-status-button{border-color:#ffd45c66;color:#ffe9a8}.room-status-button small{color:#ffd45c;font-size:13px;letter-spacing:.18em}
+.name-field{order:0}#createButton{order:1}.room-status-button{order:2}.join-row{order:3}.action-note{order:4}#botButton{order:5}.daily-challenge-panel{order:6}
+.daily-challenge-panel{margin-top:4px;padding:16px;border-radius:12px}
+.daily-heading b,.daily-board-heading b{font-size:12px}.daily-heading small,.daily-board-heading small{font-size:12.5px;margin-top:4px}.daily-date{font-size:12px}
+.daily-start-row{margin:14px 0 16px}.daily-start-row .button{font-size:15px;padding:13px}
+.daily-board-heading{padding-top:12px}.daily-leaderboard{gap:6px;margin-top:10px}.daily-leaderboard>small{font-size:13px}
+.daily-row{font-size:14px;padding:8px 10px;gap:10px;grid-template-columns:28px 1fr auto auto}.daily-rank{font-size:12px}.daily-row>strong{font-size:14px}.daily-row .button{font-size:12px;padding:6px 11px}
+.feature-strip{padding-top:26px}.feature-icon{width:40px;height:40px;font-size:19px;border-radius:11px}.feature-strip b{font-size:12px}.feature-strip small{font-size:13px;margin-top:4px}
+.error-message{font-size:14px}
+
+/* Room popup */
+.room-panel:not(.hidden){padding:26px}.room-panel-top .eyebrow{font-size:11px}.room-panel-top h2{font-size:25px}.room-panel-top .button{font-size:13px;padding:9px 12px}
+.label{font-size:11px}.waiting-pill{font-size:11px;padding:8px 11px}.copy-room-code{font-size:11px;padding:9px 12px}
+.room-panel .share-note,.ready-hint{font-size:13.5px;line-height:1.5}
+.characters{gap:10px}.character{font-size:13px;padding:11px 4px 9px}.character-figure{width:32px;height:32px}
+.player-row{font-size:14.5px;padding:10px 12px}.player-row small{font-size:11.5px}
+.room-controls .button{font-size:15px;padding:14px}
+
+/* Game HUD */
+.game-topline .eyebrow{font-size:11px;margin-bottom:6px}.arena-name{font-size:16px}
+.timer-box .label{font-size:11px}.timer-box strong{font-size:32px;margin-top:2px}.crown-status{font-size:11.5px;margin-top:5px}
+.game-topline .quiet{font-size:13px;padding:10px 14px}
+.score-card{padding:12px 16px;gap:13px}.score-info{gap:4px}.score-info small{font-size:11px}.score-name{font-size:16px;font-weight:600}.score-crown{font-size:12.5px}.score-value{font-size:24px}.versus{font-size:13px}
+.toast{font-size:14.5px;padding:11px 20px;font-weight:500}
+.count-overlay span{font-size:14px}
+.replay-overlay .label{font-size:11px}.replay-overlay strong{font-size:14.5px}.replay-overlay .button{font-size:13px;padding:8px 12px}
+.finish-banner span{font-size:15px}
+
+/* Field guide under the arena */
+.guide-panel{padding:22px 24px;margin-top:16px;border-radius:14px}
+.guide-heading .eyebrow{font-size:11px;margin-bottom:6px}.guide-heading h2{font-size:19px}.guide-note{font-size:12.5px}
+.how-to-play{font-size:14.5px;line-height:1.6;padding:12px 14px;margin-top:14px;border-radius:9px}
+.power-legend{gap:10px;margin-top:16px}.power-guide{padding:12px;gap:12px;border-radius:10px}.power-symbol{width:34px;height:34px;font-size:18px;border-radius:9px}
+.power-guide b{font-size:14.5px}.power-guide small{font-size:12.5px;line-height:1.4;margin-top:4px}
+.trail-warning{font-size:14px;line-height:1.55;margin-top:14px;gap:11px}.warning-mark{width:24px;height:24px;font-size:13px}
+.breach-guide,.crown-guide{font-size:14px;line-height:1.55;padding:12px 14px;gap:14px;border-radius:10px}.breach-guide b,.crown-guide b{font-size:12px}
+.game-footer{font-size:12px;margin-top:16px;letter-spacing:.03em;gap:10px 28px;flex-wrap:wrap}.game-footer>div:nth-child(2){flex:1;text-align:center;min-width:240px}.keys span{margin-left:8px}.power-status{white-space:nowrap}.keys{gap:5px}.keys kbd{font-size:12px;padding:5px 8px;border-radius:5px}.power-status{font-size:12px}
+
+/* Results and settings */
+.result-card{padding:34px 40px;max-width:min(560px,calc(100% - 32px))}.result-card .label{font-size:11px}.result-card h2{font-size:38px}.result-card p{font-size:14.5px;line-height:1.5}
+.result-stats{gap:8px}.result-stat{grid-template-columns:1fr auto;gap:4px 16px;padding:12px 14px;font-size:14.5px;border-radius:9px}.result-stat strong{font-size:15px}.result-stat small{grid-column:1/-1;text-align:left;font-size:12.5px;min-width:0;white-space:normal;line-height:1.45}
+.result-actions{gap:10px}.result-actions .button{font-size:15px;padding:13px 20px}
+.settings-dialog form{padding:26px}.settings-heading .eyebrow{font-size:11px}.settings-heading h2{font-size:26px}
+.setting-row{padding:16px 0}.setting-row b{font-size:15.5px}.setting-row small{font-size:13px;line-height:1.4}.settings-done{font-size:15px}
+
+@media(max-width:1100px){.lobby-view{grid-template-columns:minmax(0,1fr) minmax(360px,440px);gap:32px 40px}}
+@media(max-width:800px){.lobby-view{grid-template-columns:1fr}.hero-copy p{font-size:16px}.power-legend{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:480px){
+  .lobby-card,.room-panel:not(.hidden){padding:18px}.hero-copy p{font-size:15px}.lobby-howto p{font-size:14px}
+  .characters{grid-template-columns:repeat(3,1fr)}
+  .arena-name{font-size:12px}.game-topline .quiet{font-size:11px;padding:8px 10px}.timer-box strong{font-size:22px}.timer-box .label,.crown-status{font-size:9.5px}
+  .score-card{padding:8px;gap:8px}.score-name{font-size:12.5px}.score-info small,.score-crown{font-size:10px}.score-value{font-size:16px}.versus{font-size:10px}
+  .toast{font-size:12.5px;padding:9px 14px}
+  .guide-panel{padding:16px}.guide-heading h2{font-size:16px}.power-guide b{font-size:13px;white-space:normal}.power-guide small{font-size:11.5px}
+  .how-to-play,.trail-warning,.breach-guide,.crown-guide{font-size:13px}
+  .result-card{padding:24px 18px}.result-card h2{font-size:30px}
+}
+
+/* One-screen hero: headline, quick start, and play card fit the viewport on laptops and desktops. */
+.topbar{height:64px}
+.name-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px}.name-head small{font-size:12px;color:#7f8c9d}
+.hero-copy .lobby-howto{max-width:520px;margin:22px 0 0}
+.daily-heading .button{flex:none;padding:11px 16px;font-size:14px}
+.daily-heading b .daily-date{margin-left:6px;font-size:11px;color:#aab6c8;letter-spacing:.06em}
+.daily-board-heading{margin-top:14px}
+.daily-leaderboard{max-height:112px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#3a4658 transparent}
+@media(min-width:900px){
+  .lobby-view{min-height:0;grid-template-rows:minmax(calc(100dvh - 64px),auto) auto;align-items:center;gap:0 56px;padding:0 3%}
+  .hero-copy{padding:20px 0}
+  .hero-copy .eyebrow{margin-bottom:12px}
+  .hero-copy h1{font-size:clamp(40px,min(4.5vw,8.5vh),80px);margin-bottom:14px}
+  .hero-copy p{margin:0}
+  .hero-art-wrap{margin:6px 0 -14px -24px}
+  .hero-art{height:clamp(120px,calc(100dvh - 590px),250px)}
+  .lobby-card{padding:22px 24px;margin:20px 0}
+  .connect-status{margin-bottom:14px}
+  .room-actions{gap:11px}
+  .room-actions>.button{min-height:48px;padding:12px 18px}.join-row input{height:48px}
+  .daily-challenge-panel{padding:14px 16px}
+  .feature-strip{margin:0 0 8px}
+}
+@media(min-width:900px) and (max-height:760px){.hero-art-wrap{display:none}.hero-copy h1{font-size:clamp(40px,min(4.5vw,9vh),64px)}}

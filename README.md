@@ -26,7 +26,7 @@ Territory Rush is a fast, browser-based territory-control game. Leave your color
 
 ### The Crown
 
-The Crown activates with **1:30 remaining** and moves at **0:45**. Stand on its tile for 5 seconds to earn a Crown point. Each Crown point adds **4 points** to your final score.
+The Crown activates with **1:30 remaining** and moves at **0:45**. It always appears on a tile the same walking distance from both bases, so neither player gets a head start. Stand on its tile for 5 seconds to earn a Crown point. Each Crown point adds **4 points** to your final score.
 
 **Final score = territory cells + 4 points per Crown point.**
 

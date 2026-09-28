@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
@@ -92,12 +92,14 @@ function saveDailyResult(room) {
 }
 
 const server = createServer((req, res) => {
-  const pathname = decodeURIComponent(new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname);
+  let pathname;
+  try { pathname = decodeURIComponent(new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname); }
+  catch { res.writeHead(400, { "content-type": "text/plain; charset=utf-8" }); res.end("Bad request\n"); return; }
   const relative = pathname === "/" ? "index.html" : normalize(pathname).replace(/^([/\\]|\.\.(?:[/\\]|$))+/, "");
   const file = resolve(publicDir, relative);
-  if (!(file === publicDir || file.startsWith(publicDir + sep)) || !existsSync(file)) {
+  if (!(file === publicDir || file.startsWith(publicDir + sep)) || !existsSync(file) || !statSync(file).isFile()) {
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-    res.end("Territory Rush frontend is not installed yet. Stage 4 adds it.\n");
+    res.end("Not found\n");
     return;
   }
   const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
@@ -105,7 +107,7 @@ const server = createServer((req, res) => {
   res.end(readFileSync(file));
 });
 
-const wss = new WebSocketServer({ server, path: "/ws" });
+const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 64 * 1024 });
 
 function send(socket, type, data = {}) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type, ...data }));
@@ -152,15 +154,13 @@ function sendSnapshot(room) {
     players, powerUps: game.powerUps, theme: game.theme, crown: game.crown, startedAt: game.startedAt, endsAt: game.endsAt,
     countdownMs: Math.max(0, game.startedAt - now),
     remainingMs: Math.min(GAME.durationMs, Math.max(0, game.endsAt - Math.max(now, game.startedAt))),
-    finished: game.finished, winnerId: game.winnerId, draw: game.draw,
+    finished: game.finished, winnerId: game.winnerId, draw: game.draw, serverNow: now,
     highlights: game.finished ? game.highlights : [],
     effects: game.effects.splice(0),
   });
 }
 
 function startMatch(room) {
-  if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
-  room.cleanupTimer = null;
   room.rematchVotes = new Set();
   const playerListNow = [...room.players.values()];
   const participants = playerListNow.map((p) => ({ id: p.id, name: p.name, character: p.character, color: p.color }));
@@ -176,12 +176,27 @@ function startMatch(room) {
   sendSnapshot(room);
 }
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+function cleanName(value) {
+  // Bidi overrides are stripped so a name cannot flip the text around it; ZWJ/ZWNJ stay for emoji and Indic/Persian scripts.
+  const text = String(value ?? "").normalize("NFC").replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "").replace(/\s+/g, " ").trim();
+  return [...graphemes.segment(text)].slice(0, 18).map((part) => part.segment).join("") || "Player";
+}
+
 function addPlayer(room, socket, name = "Player") {
   const id = randomUUID();
-  const player = { id, name: String(name).slice(0, 20) || "Player", character: null, color: null, socket };
+  const player = { id, name: cleanName(name), character: null, color: null, socket };
   room.players.set(id, player);
   sockets.set(socket, { room, player });
   return player;
+}
+
+function leaveWaitingRoom(socket) {
+  const session = sockets.get(socket);
+  if (!session) return true;
+  if (session.room.status === "playing") { send(socket, "error", { message: "Leave your current match first." }); return false; }
+  disconnect(socket);
+  return true;
 }
 
 function handleMessage(socket, message) {
@@ -195,8 +210,8 @@ function handleMessage(socket, message) {
     return send(socket, "daily-replay", { entry: { name: entry.name, score: entry.score, rank }, replay: entry.replay });
   }
   if (message.type === "daily-challenge") {
-    if (session) return send(socket, "error", { message: "Leave your current room before starting the daily challenge." });
-    const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, botEnabled: true, dailyChallenge: true, dailyDay: utcDay(), dailyPlayerKey: /^[\w-]{12,80}$/.test(String(message.playerKey || "")) ? message.playerKey : randomUUID(), cleanupTimer: null };
+    if (!leaveWaitingRoom(socket)) return;
+    const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, botEnabled: true, dailyChallenge: true, dailyDay: utcDay(), dailyPlayerKey: /^[\w-]{12,80}$/.test(String(message.playerKey || "")) ? message.playerKey : randomUUID() };
     rooms.set(room.code, room);
     const human = addPlayer(room, socket, message.name);
     human.character = characters[0].id; human.color = characters[0].color;
@@ -207,9 +222,8 @@ function handleMessage(socket, message) {
     return;
   }
   if (message.type === "play-bot") {
-    if (session && (message.type !== "join-room" || session.room.status !== "waiting")) return send(socket, "error", { message: "This connection is already in a room." });
-    
-    const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, botEnabled: true, cleanupTimer: null };
+    if (!leaveWaitingRoom(socket)) return;
+    const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, botEnabled: true };
     rooms.set(room.code, room);
     const human = addPlayer(room, socket, message.name);
     const botCharacter = characters[1];
@@ -219,8 +233,8 @@ function handleMessage(socket, message) {
     return;
   }
   if (message.type === "create-room") {
-    if (session && (message.type !== "join-room" || session.room.status !== "waiting")) return send(socket, "error", { message: "This connection is already in a room." });
-    const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, cleanupTimer: null };
+    if (!leaveWaitingRoom(socket)) return;
+    const room = { code: makeCode(), players: new Map(), status: "waiting", game: null };
     rooms.set(room.code, room);
     const host = addPlayer(room, socket, message.name);
     room.hostPlayerId = host.id;
@@ -278,10 +292,9 @@ function handleMessage(socket, message) {
     return;
   }
   if (message.type === "rematch" && room.status === "finished") {
+    if (!room.botEnabled && room.players.size < 2) return send(socket, "error", { message: "Your opponent left, so a rematch isn't possible." });
     room.rematchVotes ??= new Set();
     room.rematchVotes.add(player.id);
-    if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
-    room.cleanupTimer = setTimeout(() => rooms.delete(room.code), 90_000);
     const requiredVotes = room.players.size;
     if (requiredVotes > 0 && room.rematchVotes.size >= requiredVotes) startMatch(room);
     else broadcast(room, "rematch-pending", { playerId: player.id, message: "A player wants a rematch." });
@@ -300,6 +313,7 @@ function disconnect(socket) {
   sockets.delete(socket);
   const { room, player } = session;
   room.players.delete(player.id);
+  if (!room.players.size) { rooms.delete(room.code); return; }
   if (room.status === "playing") {
     room.status = "disconnected";
     if (room.game) {
@@ -308,14 +322,26 @@ function disconnect(socket) {
     }
     broadcast(room, "opponent-disconnected", { message: `${player.name} disconnected. This room has ended.` });
     sendSnapshot(room);
-    room.cleanupTimer = setTimeout(() => rooms.delete(room.code), 90_000);
+  } else if (room.status === "finished") {
+    broadcast(room, "opponent-left", { message: `${player.name} left the room.` });
   } else {
-    if (!room.players.size) rooms.delete(room.code);
-    else lobbyUpdate(room);
+    if (room.hostPlayerId === player.id) room.hostPlayerId = [...room.players.keys()][0];
+    lobbyUpdate(room);
   }
 }
 
+// Half-open connections never fire "close", so ping every 30s and drop sockets that stop answering.
+setInterval(() => {
+  for (const socket of wss.clients) {
+    if (socket.isAlive === false) { socket.terminate(); continue; }
+    socket.isAlive = false;
+    socket.ping();
+  }
+}, 30_000);
+
 wss.on("connection", (socket) => {
+  socket.isAlive = true;
+  socket.on("pong", () => { socket.isAlive = true; });
   send(socket, "welcome", { characters, protocolVersion: 1 });
   socket.on("message", (raw) => {
     let message;
@@ -333,15 +359,22 @@ setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
     if (room.status !== "playing" || !room.game) continue;
-    if (room.botEnabled) updateBotInput(room.game, now);
-    tickGame(room.game, now);
-    if (room.dailyChallenge) recordDailyFrame(room, now);
-    if (room.game.finished) {
-      room.status = "finished";
-      saveDailyResult(room);
-      if (!room.cleanupTimer) room.cleanupTimer = setTimeout(() => rooms.delete(room.code), 90_000);
+    try {
+      if (room.botEnabled) updateBotInput(room.game, now);
+      tickGame(room.game, now);
+      if (room.dailyChallenge) recordDailyFrame(room, now);
+      if (room.game.finished) {
+        room.status = "finished";
+        saveDailyResult(room);
+      }
+      sendSnapshot(room);
+    } catch (error) {
+      console.error(`Room ${room.code} tick failed:`, error);
+      room.status = "disconnected";
+      if (room.game) room.game.finished = true;
+      broadcast(room, "opponent-disconnected", { message: "Something went wrong on the server. This room has ended." });
+      try { sendSnapshot(room); } catch {}
     }
-    sendSnapshot(room);
   }
 }, GAME.tickMs);
 
