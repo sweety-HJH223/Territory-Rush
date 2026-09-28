@@ -1,6 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const lobby = $("#lobby"), gameView = $("#game"), createButton = $("#createButton"), joinButton = $("#joinButton"), botButton = $("#botButton");
 const roomCodeInput = $("#roomCode"), errorMessage = $("#errorMessage"), roomPanel = $("#roomPanel");
+const readyButton = $("#readyButton"), startButton = $("#startButton");
 const charactersEl = $("#characters"), playersListEl = $("#playersList"), canvas = $("#board"), ctx = canvas.getContext("2d");
 const toastEl = $("#toast");
 
@@ -121,6 +122,8 @@ function renderLobby(message) {
   roomCode = message.code; $("#roomCodeLabel").textContent = roomCode || "-----";
   roomPanel.classList.remove("hidden");
   const me = message.players.find((p) => p.id === localPlayerId);
+  const rival = message.players.find((p) => p.id !== localPlayerId);
+  const isHost = message.hostPlayerId === localPlayerId;
   const taken = new Set(message.players.filter((p) => p.id !== localPlayerId).map((p) => p.character).filter(Boolean));
   for (const el of charactersEl.children) {
     const isTaken = taken.has(el.dataset.id);
@@ -130,10 +133,24 @@ function renderLobby(message) {
   }
   playersListEl.innerHTML = message.players.map((p) => {
     const char = characterOptions.find((c) => c.id === p.character);
-    return `<div class="player-row"><span class="mini-dot" style="--color:${p.color || "#697487"}"></span>${escapeHtml(p.name)}<small>${p.ready ? escapeHtml(char?.name || "READY") : "CHOOSING"}</small></div>`;
+    const status = p.bot ? "READY" : p.ready ? "READY" : char ? "SELECTED" : "CHOOSING";
+    return `<div class="player-row"><span class="mini-dot" style="--color:${p.color || "#697487"}"></span>${escapeHtml(p.name)}<small>${escapeHtml(char?.name || status)} · ${status}</small></div>`;
   }).join("");
   const versusBot = message.players.some((p) => p.bot);
-  $("#readyHint").textContent = versusBot ? (me?.ready ? "Rush Bot is ready. Starting your match…" : "Choose your character to start against Rush Bot.") : message.players.length < 2 ? "Waiting for an opponent to join…" : message.players.every((p) => p.ready) ? "Both players ready. Starting match…" : "Both players choose a character to start.";
+  readyButton.classList.toggle("hidden", !message.hostPlayerId || isHost || versusBot);
+  readyButton.disabled = !me?.character;
+  readyButton.textContent = me?.ready ? "Ready ✓" : "Ready";
+  startButton.classList.toggle("hidden", !message.hostPlayerId || !isHost || versusBot);
+  startButton.disabled = !(me?.character && message.players.length === 2 && rival?.character && rival.ready);
+  $("#readyHint").textContent = versusBot
+    ? "Choose a character to start against Rush Bot."
+    : message.players.length < 2
+      ? "Waiting for an opponent to join…"
+      : !me?.character
+        ? "Choose your character to continue."
+        : isHost
+          ? rival?.ready ? "Your opponent is ready. Start the match when you are." : "Waiting for your opponent to choose a character and get ready…"
+          : me.ready ? "You’re ready. Waiting for the host to start the match…" : "Character selected. Press Ready when you’re ready to play.";
 }
 function escapeHtml(value) { const span = document.createElement("span"); span.textContent = value; return span.innerHTML; }
 
@@ -205,6 +222,8 @@ function exitDailyReplay() {
 
 createButton.addEventListener("click", () => { setError(""); send("create-room", { name: "Player" }); });
 botButton.addEventListener("click", () => { setError(""); send("play-bot", { name: "Player" }); });
+readyButton.addEventListener("click", () => { setError(""); send("player-ready", { ready: true }); });
+startButton.addEventListener("click", () => { setError(""); send("start-match"); });
 $("#dailyName").addEventListener("input", (event) => localStorage.setItem("tr-daily-name", event.target.value.slice(0, 18)));
 $("#dailyButton").addEventListener("click", () => {
   const name = $("#dailyName").value.trim().slice(0, 18) || "Player";
