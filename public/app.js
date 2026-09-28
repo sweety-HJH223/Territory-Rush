@@ -615,3 +615,38 @@ socket.addEventListener("message", (event) => {
     roomStatusButton.classList.add("hidden");
   }
 });
+
+
+// Keep scoreboard portraits in sync with the animated arena characters.
+function drawScoreCharacter(target, player, time) {
+  const x = 24, y = 24 + (visualEffectsEnabled ? Math.sin(time / 175 + (player.id.charCodeAt(0) || 0)) * 1.1 : 0);
+  const size = 11.5, color = player.color || "#57e389", shape = player.character || "comet";
+  target.save(); target.shadowColor = color; target.shadowBlur = 9;
+  target.beginPath(); target.arc(x, y, size + 2, 0, Math.PI * 2); target.fillStyle = "#0a111b"; target.fill(); target.shadowBlur = 0;
+  const fill = target.createRadialGradient(x - 4, y - 5, 1, x, y, size + 2); fill.addColorStop(0, "#fff"); fill.addColorStop(.2, color); fill.addColorStop(1, color);
+  target.fillStyle = fill; target.strokeStyle = "#f5fbff"; target.lineWidth = 1.2; target.beginPath();
+  if (shape === "blaze") { target.moveTo(x, y - size - 1); target.lineTo(x + size, y + size - 2); target.lineTo(x, y + size); target.lineTo(x - size, y + size - 2); target.closePath(); }
+  else if (shape === "violet") { for (let i = 0; i < 6; i++) { const a = Math.PI / 3 * i - Math.PI / 6, px = x + Math.cos(a) * size, py = y + Math.sin(a) * size; if (!i) target.moveTo(px, py); else target.lineTo(px, py); } target.closePath(); }
+  else if (shape === "sunny") { for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? size * .72 : size, px = x + Math.cos(a) * r, py = y + Math.sin(a) * r; if (!i) target.moveTo(px, py); else target.lineTo(px, py); } target.closePath(); }
+  else if (shape === "berry") target.roundRect(x - size, y - size, size * 2, size * 2, 4);
+  else if (shape === "moss") target.ellipse(x, y, size, size * .82, -.12, 0, Math.PI * 2);
+  else target.arc(x, y, size, 0, Math.PI * 2);
+  target.fill(); target.stroke(); target.fillStyle = "#12202b"; target.beginPath(); target.arc(x - 3, y - .5, 1.3, 0, Math.PI * 2); target.arc(x + 3, y - .5, 1.3, 0, Math.PI * 2); target.fill();
+  if (shape === "moss") { target.fillStyle = "#d5ffd0"; target.beginPath(); target.ellipse(x + 1, y - 9, 2.1, 4, -.7, 0, Math.PI * 2); target.fill(); }
+  if (shape === "comet") { target.strokeStyle = color; target.lineWidth = 1.6; target.beginPath(); target.moveTo(x - 9, y + 5); target.lineTo(x - 15, y + 9); target.moveTo(x - 10, y + 1); target.lineTo(x - 16, y + 3); target.stroke(); }
+  target.strokeStyle = color; target.lineWidth = 1.5; target.beginPath(); target.arc(x, y, size + 4, time / 1200, time / 1200 + Math.PI * 1.55); target.stroke();
+  if (player.shield) { target.strokeStyle = "#84e6ff"; target.lineWidth = 2; target.beginPath(); target.arc(x, y, size + 6, 0, Math.PI * 2); target.stroke(); }
+  target.restore();
+}
+function animateScoreCharacters(time = 0) {
+  requestAnimationFrame(animateScoreCharacters); if (!state?.players) return;
+  state.players.slice(0, 2).forEach((player, index) => {
+    const card = $("#score" + index); if (!card) return;
+    let sprite = card.querySelector(".score-avatar");
+    if (!(sprite instanceof HTMLCanvasElement)) { const replacement = document.createElement("canvas"); replacement.className = "score-avatar"; replacement.width = 48; replacement.height = 48; replacement.setAttribute("role", "img"); sprite.replaceWith(replacement); sprite = replacement; }
+    sprite.setAttribute("aria-label", (player.character || "comet") + " character");
+    const target = sprite.getContext("2d"); target.clearRect(0, 0, sprite.width, sprite.height);
+    drawScoreCharacter(target, { ...player, id: String(player.id || index) }, visualEffectsEnabled ? time : 0);
+  });
+}
+requestAnimationFrame(animateScoreCharacters);
