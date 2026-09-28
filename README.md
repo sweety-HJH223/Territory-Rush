@@ -41,7 +41,7 @@ The Crown activates with **1:30 remaining** and moves at **0:45**. It always app
 - **Difficulty (Easy / Normal / Hard):** Pick it before creating a room or playing the bot; the room host can change it in the lobby. Harder settings mean faster movement, a bigger loss when your trail is cut, and more land stolen per capture. Against the bot, it also sets how aggressive the Rush Bot plays. The Daily Challenge always uses Normal.
 - **Daily Challenge:** Compete on the same daily seed and compare scores on the leaderboard.
 
-Choose a character in the room lobby. Each player must choose a different character. The six characters are Comet, Moss, Blaze, Violet, Sunny, and Berry.
+Choose a character in the room lobby. Each player must choose a different character. The six characters are Comet, Moss, Blaze, Violet, Sunny, and Berry. Each one has its own animated look (Comet's stardust tail, Moss's sprout, Blaze's flames, Violet's crystal sparkle, Sunny's spinning rays, Berry's leaf cap). Their eyes follow the direction they move, and their faces react to the match: happy after a capture, determined while drawing a trail, worried when the rival is close, dizzy when cut, and shivering when frozen. The characters are cosmetic, so every pick plays the same.
 
 ## Run locally
 

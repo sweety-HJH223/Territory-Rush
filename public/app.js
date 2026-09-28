@@ -118,7 +118,10 @@ function handleMessage(message) {
     else { button.disabled = false; button.textContent = "Accept rematch"; }
   }
   if (message.type === "opponent-disconnected") { showToast(message.message, "penalty"); setTimeout(() => showResult(state || {}), 1200); }
-  if (message.type === "emote" && EMOTES[message.emote]) { emoteBubbles.set(message.playerId, { text: EMOTES[message.emote], startedAt: performance.now() }); playSound("emote"); }
+  if (message.type === "emote" && EMOTES[message.emote]) {
+    emoteBubbles.set(message.playerId, { text: EMOTES[message.emote], startedAt: performance.now() }); playSound("emote");
+    setMood(message.playerId, ["happy", "happy", "determined", "worried"][message.emote], 1600);
+  }
   if (message.type === "opponent-left") {
     opponentLeft = true; showToast(message.message, "penalty");
     $("#rematchButton").disabled = true; $("#rematchButton").textContent = "Rival left";
@@ -129,11 +132,21 @@ function renderCharacters() {
   charactersEl.replaceChildren();
   for (const character of characterOptions) {
     const button = document.createElement("button"); button.className = "character"; button.dataset.id = character.id;
-    button.innerHTML = `<span class="character-figure" style="--char:${character.color}"></span>${character.name}`;
+    button.style.setProperty("--char", character.color);
+    button.innerHTML = `<canvas class="character-portrait" width="96" height="96" aria-hidden="true"></canvas>${escapeHtml(character.name)}`;
     button.addEventListener("click", () => { setError(""); send("select-character", { characterId: character.id }); });
+    button.addEventListener("pointerenter", () => showCharacterBlurb(character.id));
     charactersEl.append(button);
   }
 }
+let selectedCharacterId = null;
+function showCharacterBlurb(id = selectedCharacterId) {
+  const character = characterOptions.find((c) => c.id === id);
+  const blurb = $("#characterBlurb");
+  blurb.innerHTML = character ? `<b>${escapeHtml(character.name)}</b> · ${escapeHtml(CHARACTER_BLURBS[character.id] || "")}` : "Every character has its own look and personality";
+  blurb.style.setProperty("--char", character?.color || "#8a95a8");
+}
+charactersEl.addEventListener("pointerleave", () => showCharacterBlurb());
 function renderLobby(message) {
   roomCode = message.code; $("#roomCodeLabel").textContent = roomCode || "-----";
   roomPanel.classList.remove("hidden");
@@ -145,8 +158,11 @@ function renderLobby(message) {
     const isTaken = taken.has(el.dataset.id);
     el.classList.toggle("selected", el.dataset.id === me?.character);
     el.disabled = isTaken;
-    el.title = isTaken ? "Already selected by another player" : "Choose this character";
+    const character = characterOptions.find((c) => c.id === el.dataset.id);
+    el.title = isTaken ? "Already selected by another player" : `${character?.name} · ${CHARACTER_BLURBS[el.dataset.id] || ""}`;
   }
+  selectedCharacterId = me?.character || null;
+  if (!charactersEl.matches(":hover")) showCharacterBlurb();
   playersListEl.innerHTML = message.players.map((p) => {
     const char = characterOptions.find((c) => c.id === p.character);
     const status = p.bot ? "READY" : p.ready ? "READY" : char ? "SELECTED" : "CHOOSING";
@@ -345,10 +361,11 @@ function updateTargets() {
     previousEffects.add(signature);
     if (effect.type === "claim") { const breach = effect.breached ? ` · BREACH +${effect.breached}` : ""; showToast(effect.playerId === localPlayerId ? `Territory claimed · +${effect.cells} cells${breach}` : `Opponent claimed territory${breach}`, "claim"); playSound("claim");
       const claimer = state.players.find((player) => player.id === effect.playerId);
+      if (claimer) setMood(claimer.id, "happy", 1100);
       if (claimer && effect.cells) {
         const pos = renderPositions.get(claimer.id) || claimer;
-        addPopup(pos.x, pos.y - 14, `+${effect.cells}${effect.bonus ? " BONUS" : ""}`, claimer.color, 14 + Math.min(14, effect.cells / 5));
-        if (effect.breached) addPopup(pos.x, pos.y - 38, "BREACH!", "#ff83ce", 15);
+        addPopup(pos.x, pos.y - 22, `+${effect.cells}${effect.bonus ? " BONUS" : ""}`, claimer.color, 14 + Math.min(14, effect.cells / 5));
+        if (effect.breached) addPopup(pos.x, pos.y - 46, "BREACH!", "#ff83ce", 15);
         addShake(effect.playerId === localPlayerId ? Math.min(7, 1.5 + effect.cells / 12) : 1.5, 260);
       }
     }
@@ -365,6 +382,7 @@ function updateTargets() {
       if (visualEffectsEnabled) { const frame = $(".board-frame"); frame.classList.remove("impact"); void frame.offsetWidth; frame.classList.add("impact"); setTimeout(() => frame.classList.remove("impact"), 300); }
       const caught = state.players.find((player) => player.id === effect.playerId);
       if (caught) spawnBurst(caught.x, caught.y, "#ff6e91", 18);
+      for (const player of state.players) setMood(player.id, player.id === effect.playerId ? "hurt" : "happy", 1300);
       if (effect.hitCell) {
         const [hx, hy] = parseCell(effect.hitCell), size = state.map.cellSize;
         spawnBurst((hx + .5) * size, (hy + .5) * size, "#ff6e91", 26);
@@ -375,18 +393,19 @@ function updateTargets() {
     if (effect.type === "shield-block") {
       showToast(effect.playerId === localPlayerId ? "Shield absorbed the hit" : "Opponent's shield blocked the hit", "power"); playSound("power");
       const owner = state.players.find((player) => player.id === effect.playerId);
-      if (owner) { const pos = renderPositions.get(owner.id) || owner; addPopup(pos.x, pos.y - 16, "BLOCKED!", "#84e6ff", 16); addShake(3, 200); }
+      if (owner) { const pos = renderPositions.get(owner.id) || owner; addPopup(pos.x, pos.y - 24, "BLOCKED!", "#84e6ff", 16); addShake(3, 200); }
     }
     if (effect.type === "power-collect") {
       showToast(`${effect.playerId === localPlayerId ? "You collected" : "Opponent collected"} ${powerName(effect.powerType)}`, "power"); playSound("power");
       const collector = state.players.find((player) => player.id === effect.playerId);
       const colors = { speed: "#ffd45c", shield: "#70d8ff", freeze: "#9ba8ff", bonus: "#ff83ce" };
+      if (collector) setMood(collector.id, "happy", 700);
       if (collector) { spawnBurst(collector.x, collector.y, colors[effect.powerType] || "#fff", 15); addPopup(collector.x, collector.y - 16, powerName(effect.powerType).toUpperCase(), colors[effect.powerType] || "#fff", 13); }
     }
   }
 }
 function resetMatchFx() {
-  popups = []; motionTrails.clear(); lastCountdown = 0; goUntil = 0; lastTickSecond = null; finalPhase = false;
+  popups = []; motionTrails.clear(); facing.clear(); moods.clear(); lastCountdown = 0; goUntil = 0; lastTickSecond = null; finalPhase = false;
   finishBannerShown = false; finishBannerActive = false; clearTimeout(finishBannerTimer);
   $("#finishBanner").className = "finish-banner hidden";
   $(".timer-box").classList.remove("final-countdown"); $(".board-frame").classList.remove("final-countdown");
@@ -497,7 +516,7 @@ function displayResult(message) {
   $("#resultText").textContent = message.message || `Final score ${scores} · land cells + 4 per Crown point`;
   $("#resultStats").innerHTML = (state?.players || []).map((p) => {
     const stats = p.stats || {};
-    return `<div class="result-stat" style="--stat-color:${p.color}"><span><bdi>${escapeHtml(p.name)}</bdi>${p.id === localPlayerId ? " · YOU" : ""}</span><strong>${p.matchScore ?? p.territoryCells ?? 0} PTS</strong><small>${p.territoryPercent.toFixed(1)}% territory · ${stats.crownPoints || 0} Crown points · ${stats.cellsClaimed || 0} cells captured · ${stats.trailCuts || 0} cuts · ${stats.powerUpsCollected || 0} pickups</small></div>`;
+    return `<div class="result-stat has-avatar" style="--stat-color:${p.color}"><canvas class="result-avatar" width="96" height="96" data-id="${escapeHtml(String(p.id))}" aria-hidden="true"></canvas><span><bdi>${escapeHtml(p.name)}</bdi>${p.id === localPlayerId ? " · YOU" : ""}</span><strong>${p.matchScore ?? p.territoryCells ?? 0} PTS</strong><small>${p.territoryPercent.toFixed(1)}% territory · ${stats.crownPoints || 0} Crown points · ${stats.cellsClaimed || 0} cells captured · ${stats.trailCuts || 0} cuts · ${stats.powerUpsCollected || 0} pickups</small></div>`;
   }).join("");
   const unavailable = message.status === "disconnected" || state?.status === "disconnected";
   $("#rematchButton").classList.toggle("hidden", unavailable);
@@ -549,7 +568,8 @@ async function buildShareImage() {
     const y = 318 + i * 86;
     g.fillStyle = colorAlpha(p.color, .12); roundRect(g, 64, y - 38, 472, 70, 14); g.fill();
     g.strokeStyle = colorAlpha(p.color, .45); g.lineWidth = 1.5; g.stroke();
-    g.beginPath(); g.arc(94, y - 3, 11, 0, Math.PI * 2); g.fillStyle = p.color; g.fill();
+    const mood = state.draw ? "idle" : state.winnerId === p.id ? "happy" : "worried";
+    paintCharacter(g, { character: p.character, color: p.color, x: 92, y: y - 2, scale: 1.3, mood });
     g.font = sans(24, 700); g.fillStyle = "#f1f4f8"; g.fillText(fitText(g, p.name, 230), 118, y + 3);
     if (p === me) { const w = g.measureText(fitText(g, p.name, 230)).width; g.font = mono(12); g.fillStyle = "#9fb0c4"; g.fillText("YOU", 128 + w, y + 2); }
     g.font = mono(13, 500); g.fillStyle = "#8a95a8"; g.fillText(`${(p.territoryPercent || 0).toFixed(1)}% land · ${p.stats?.crownPoints || 0} ♛`, 118, y + 22);
@@ -636,40 +656,195 @@ function roundedRect(x, y, width, height, radius) {
   ctx.beginPath();
   ctx.roundRect(x, y, width, height, radius);
 }
-function drawAvatar(player, x, y, time, cellSize) {
-  const size = 8.2, bob = Math.sin(time / 175 + (player.id.charCodeAt(0) || 0)) * 1.1;
-  y += bob;
-  ctx.save();
-  ctx.fillStyle = "#05091188"; ctx.beginPath(); ctx.ellipse(x, y + 8, 8, 3.2, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.shadowColor = colorAlpha(player.color, .75); ctx.shadowBlur = 14;
-  ctx.beginPath(); ctx.arc(x, y, size + 2.8, 0, Math.PI * 2); ctx.fillStyle = "#0a111b"; ctx.fill();
-  const body = ctx.createRadialGradient(x - 3, y - 4, 1, x, y, size + 2);
-  body.addColorStop(0, "#ffffff"); body.addColorStop(.18, player.color); body.addColorStop(1, colorAlpha(player.color, .7));
-  ctx.shadowBlur = 0;
-  const shape = player.character || "comet";
-  ctx.fillStyle = body; ctx.strokeStyle = "#f5fbff"; ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  if (shape === "blaze") { ctx.moveTo(x, y - size - 1); ctx.lineTo(x + size, y + size - 2); ctx.lineTo(x, y + size); ctx.lineTo(x - size, y + size - 2); ctx.closePath(); }
-  else if (shape === "violet") { for (let i = 0; i < 6; i++) { const a = Math.PI / 3 * i - Math.PI / 6; const px = x + Math.cos(a) * size; const py = y + Math.sin(a) * size; if (!i) ctx.moveTo(px, py); else ctx.lineTo(px, py); } ctx.closePath(); }
-  else if (shape === "sunny") { for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? size * .72 : size; const px = x + Math.cos(a) * r, py = y + Math.sin(a) * r; if (!i) ctx.moveTo(px, py); else ctx.lineTo(px, py); } ctx.closePath(); }
-  else if (shape === "berry") roundedRect(x - size, y - size, size * 2, size * 2, 5);
-  else if (shape === "moss") { ctx.ellipse(x, y, size, size * .82, -.12, 0, Math.PI * 2); }
-  else { ctx.arc(x, y, size, 0, Math.PI * 2); }
-  ctx.fill(); ctx.stroke();
-  // Same-sized face details keep each cosmetic shape equally readable in play.
-  ctx.fillStyle = "#12202b"; ctx.beginPath(); ctx.arc(x - 2.5, y - .5, 1.05, 0, Math.PI * 2); ctx.arc(x + 2.5, y - .5, 1.05, 0, Math.PI * 2); ctx.fill();
-  if (shape === "comet") {
-    ctx.strokeStyle = colorAlpha(player.color, .8); ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(x - 7, y + 5); ctx.lineTo(x - 12, y + 9); ctx.moveTo(x - 8, y + 1); ctx.lineTo(x - 14, y + 3); ctx.stroke();
+// Every portrait (arena, scoreboard, lobby cards, results, share image) comes from paintCharacter,
+// drawn in a unit space where the body is about 10 units across its radius.
+const CHARACTER_BLURBS = {
+  comet: "Streaks around with a stardust tail",
+  moss: "Chill sprout that loves green space",
+  blaze: "Hot-headed and always fired up",
+  violet: "Cool crystal with a sparkle",
+  sunny: "Beams under a spinning sun halo",
+  berry: "Sweet, round and sneaky",
+};
+function characterPath(g, shape, t) {
+  g.beginPath();
+  if (shape === "blaze") {
+    const tip = Math.sin(t / 130) * 1.6, flick = Math.sin(t / 90) * 1.1;
+    g.moveTo(tip, -14 - flick);
+    g.bezierCurveTo(4, -9, 10, -5, 10, 2); g.bezierCurveTo(10, 8, 5, 10.5, 0, 10.5);
+    g.bezierCurveTo(-5, 10.5, -10, 8, -10, 2); g.bezierCurveTo(-10, -5, -4, -9, tip, -14 - flick);
+  } else if (shape === "violet") {
+    for (let i = 0; i < 6; i++) { const a = Math.PI / 3 * i - Math.PI / 2; g.lineTo(Math.cos(a) * 11, Math.sin(a) * 11); }
+    g.closePath();
+  } else if (shape === "berry") {
+    g.moveTo(0, 11);
+    g.bezierCurveTo(-7, 9.5, -11, 3, -10.5, -2.5); g.bezierCurveTo(-10, -8, -4.5, -9, 0, -8);
+    g.bezierCurveTo(4.5, -9, 10, -8, 10.5, -2.5); g.bezierCurveTo(11, 3, 7, 9.5, 0, 11);
   } else if (shape === "moss") {
-    ctx.fillStyle = "#d5ffd0"; ctx.beginPath(); ctx.ellipse(x + 1, y - 7, 2.1, 4, -.7, 0, Math.PI * 2); ctx.fill();
+    const w = Math.sin(t / 420) * .5;
+    g.moveTo(-10.5, 3);
+    g.bezierCurveTo(-11, -5, -6, -9.5 + w, 0, -9.5); g.bezierCurveTo(6, -9.5 - w, 11, -5, 10.5, 3);
+    g.bezierCurveTo(10, 8.5, 5, 9.5, 0, 9.5); g.bezierCurveTo(-5, 9.5, -10, 8.5, -10.5, 3);
+  } else g.arc(0, 0, shape === "sunny" ? 9 : 10, 0, Math.PI * 2);
+}
+function sparkle(g, x, y, s, color) {
+  g.beginPath(); g.moveTo(x, y - s * 2);
+  g.quadraticCurveTo(x, y, x + s * 2, y); g.quadraticCurveTo(x, y, x, y + s * 2);
+  g.quadraticCurveTo(x, y, x - s * 2, y); g.quadraticCurveTo(x, y, x, y - s * 2);
+  g.fillStyle = color; g.fill();
+}
+function paintCharacter(g, { character, color = "#57e389", x, y, scale = 1, time = 0, dir = { x: 1, y: 0 }, moving = false, mood = "idle", seed = 0, shadow = false }) {
+  const shape = CHARACTER_BLURBS[character] ? character : "comet", t = time + seed * 977, frozen = mood === "frozen";
+  const hop = moving && !frozen ? Math.abs(Math.sin(t / 105)) : 0, cheer = mood === "happy" ? Math.abs(Math.sin(t / 140)) : 0;
+  const angle = Math.atan2(dir.y, dir.x), stretch = moving && !frozen ? .07 : 0, breathe = frozen ? 0 : Math.sin(t / 480) * .03;
+  const dark = mixColor(color, -.35), light = mixColor(color, .5), ink = "#101a26";
+  g.save();
+  g.translate(x + (frozen ? Math.sin(t / 25) * .5 * scale : 0), y); g.scale(scale, scale);
+  if (shadow) { g.fillStyle = "#05091170"; g.beginPath(); g.ellipse(0, 11, 8.5 - hop * 1.5, 3, 0, 0, Math.PI * 2); g.fill(); }
+  g.translate(0, -hop * 2.2 - cheer * 1.8);
+  g.rotate(angle); g.scale(1 + stretch, 1 - stretch * .8); g.rotate(-angle); g.scale(1 - breathe * .5, 1 + breathe);
+  g.lineCap = "round"; g.lineJoin = "round";
+
+  if (shape === "comet") {
+    const len = moving ? 26 : 15, wob = Math.sin(t / 70) * 1.2;
+    g.save(); g.rotate(angle);
+    const tail = g.createLinearGradient(-4, 0, -len - 4, 0); tail.addColorStop(0, colorAlpha(color, .85)); tail.addColorStop(1, colorAlpha(color, 0));
+    g.fillStyle = tail; g.beginPath(); g.moveTo(-2, -8); g.quadraticCurveTo(-len * .55, -5 + wob, -len - 4, wob * .6); g.quadraticCurveTo(-len * .55, 5 + wob, -2, 8); g.closePath(); g.fill();
+    for (let i = 0; i < 3; i++) { const p = (t / 380 + i / 3) % 1; g.globalAlpha = 1 - p; sparkle(g, -7 - p * len, Math.sin(i * 2.1 + t / 200) * 4, .9 * (1 - p) + .3, "#ffffff"); }
+    g.globalAlpha = 1; g.restore();
   } else if (shape === "sunny") {
-    ctx.strokeStyle = "#fff1ae"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, 11, time / 800, time / 800 + Math.PI * .65); ctx.stroke();
+    g.save(); g.rotate(t / 1600); g.fillStyle = "#ffe07a";
+    const pulse = Math.sin(t / 260) * .8;
+    for (let i = 0; i < 8; i++) { g.rotate(Math.PI / 4); g.beginPath(); g.moveTo(-2.6, -8.5); g.lineTo(0, -13.8 - pulse); g.lineTo(2.6, -8.5); g.closePath(); g.fill(); }
+    g.restore();
+  } else if (shape === "blaze") {
+    g.fillStyle = "#ffb347";
+    for (const side of [-1, 1]) {
+      const f = Math.sin(t / 85 + side) * 1.3;
+      g.beginPath(); g.moveTo(side * 7, -3); g.quadraticCurveTo(side * 12.5, -6, side * (11 + f * .5), -11 - f); g.quadraticCurveTo(side * 10, -3, side * 9.5, 3); g.closePath(); g.fill();
+    }
   }
-  ctx.strokeStyle = colorAlpha(player.color, .8); ctx.lineWidth = 1.4;
-  ctx.beginPath(); ctx.arc(x, y, size + 5, time / 1200, time / 1200 + Math.PI * 1.55); ctx.stroke();
+
+  characterPath(g, shape, t);
+  g.save(); g.shadowColor = colorAlpha(color, .7); g.shadowBlur = 10 * scale; g.strokeStyle = "#08101a"; g.lineWidth = 3.2; g.stroke(); g.restore();
+  const body = g.createRadialGradient(-3.5, -5, 1, 0, 0, 13);
+  body.addColorStop(0, light); body.addColorStop(.38, color); body.addColorStop(1, dark);
+  g.fillStyle = body; g.fill();
+  g.strokeStyle = "#f5fbffcc"; g.lineWidth = 1.1; g.stroke();
+  if (shape === "violet") {
+    g.strokeStyle = "#ffffff5c"; g.lineWidth = .9; g.beginPath();
+    g.moveTo(0, -11); g.lineTo(-4.5, -5.5); g.lineTo(4.5, -5.5); g.closePath(); g.moveTo(-9.5, -5.5); g.lineTo(-4.5, -5.5); g.moveTo(9.5, -5.5); g.lineTo(4.5, -5.5); g.stroke();
+  } else if (shape === "berry") {
+    g.fillStyle = "#ffe3f0";
+    for (const [sx, sy] of [[-7, -3.5], [7, -3.5], [-7.8, 2.5], [7.8, 2.5], [-3.8, 7.6], [3.8, 7.6], [0, 9]]) { g.beginPath(); g.ellipse(sx, sy, .7, 1.1, sx * .05, 0, Math.PI * 2); g.fill(); }
+  } else if (shape === "moss") {
+    g.fillStyle = "#e4ffe833";
+    for (const [sx, sy, r] of [[-6.5, -4.5, 1.6], [7, 5, 1.3], [-7.5, 5.5, 1]]) { g.beginPath(); g.arc(sx, sy, r, 0, Math.PI * 2); g.fill(); }
+  }
+  if (frozen) {
+    characterPath(g, shape, t); g.fillStyle = "rgba(176,226,255,.5)"; g.fill();
+    g.strokeStyle = "#e6f8ff"; g.lineWidth = 1; g.beginPath(); g.moveTo(-8, -6); g.lineTo(-5.5, -3.5); g.moveTo(7.5, -6.5); g.lineTo(5.5, -4); g.stroke();
+  }
+
+  g.save();
+  const lookX = frozen ? 0 : dir.x * 1.2, lookY = frozen ? 0 : dir.y * 1.1;
+  g.translate(lookX * .6, (shape === "blaze" ? 1.5 : 0) + lookY * .5);
+  const blink = time > 0 && t % 3700 < 120;
+  if (mood === "happy") {
+    g.strokeStyle = ink; g.lineWidth = 1.5;
+    for (const ex of [-3.6, 3.6]) { g.beginPath(); g.arc(ex, -.2, 2.1, Math.PI * 1.15, Math.PI * 1.85); g.stroke(); }
+  } else if (mood === "hurt") {
+    g.strokeStyle = ink; g.lineWidth = 1.4;
+    for (const ex of [-3.6, 3.6]) { g.beginPath(); g.moveTo(ex - 1.7, -2.9); g.lineTo(ex + 1.7, .5); g.moveTo(ex + 1.7, -2.9); g.lineTo(ex - 1.7, .5); g.stroke(); }
+  } else if (frozen || blink) {
+    g.strokeStyle = ink; g.lineWidth = 1.4;
+    for (const ex of [-3.6, 3.6]) { g.beginPath(); g.moveTo(ex - 2, -1); g.lineTo(ex + 2, -1); g.stroke(); }
+  } else {
+    const pupil = mood === "worried" ? 1.05 : 1.45;
+    for (const ex of [-3.6, 3.6]) {
+      g.fillStyle = "#fbfdff"; g.beginPath(); g.ellipse(ex, -1.2, 2.5, 2.9, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = ink; g.beginPath(); g.arc(ex + lookX, -1.2 + lookY, pupil, 0, Math.PI * 2); g.fill();
+      g.fillStyle = "#fff"; g.beginPath(); g.arc(ex + lookX - .5, -1.9 + lookY, .5, 0, Math.PI * 2); g.fill();
+    }
+  }
+  if (mood === "worried" || mood === "determined") {
+    const [inner, outer] = mood === "worried" ? [-6.2, -4.8] : [-4.3, -5.9];
+    g.strokeStyle = ink; g.lineWidth = 1.3; g.beginPath();
+    g.moveTo(-5.8, outer); g.lineTo(-1.8, inner); g.moveTo(5.8, outer); g.lineTo(1.8, inner); g.stroke();
+  }
+  if (shape !== "berry" && !frozen) {
+    g.fillStyle = "rgba(255,120,160,.38)";
+    for (const cx of [-6.6, 6.6]) { g.beginPath(); g.ellipse(cx, 2.4, 1.7, 1.1, 0, 0, Math.PI * 2); g.fill(); }
+  }
+  g.strokeStyle = ink; g.fillStyle = ink; g.lineWidth = 1.3; g.beginPath();
+  if (mood === "happy" || (moving && mood === "idle")) {
+    g.moveTo(-2.8, 3); g.quadraticCurveTo(0, 7.4, 2.8, 3); g.closePath(); g.fill();
+    g.fillStyle = "#ff7d9a"; g.beginPath(); g.ellipse(0, 4.6, 1.2, .7, 0, 0, Math.PI * 2); g.fill();
+  } else if (mood === "worried" || mood === "hurt") { g.ellipse(0, 4.4, 1.5, mood === "hurt" ? 1.9 : 1.2, 0, 0, Math.PI * 2); g.fill(); }
+  else if (frozen) { g.moveTo(-2.6, 4); for (let i = 1; i <= 4; i++) g.lineTo(-2.6 + i * 1.3, i % 2 ? 3.3 : 4); g.stroke(); }
+  else if (mood === "determined") { g.moveTo(-2.2, 4.2); g.quadraticCurveTo(0, 5.2, 2.2, 3.6); g.stroke(); }
+  else { g.arc(0, 2.6, 2.4, Math.PI * .2, Math.PI * .8); g.stroke(); }
+  if (mood === "worried") {
+    g.fillStyle = "#9fe3ff"; g.beginPath(); g.moveTo(8.4, -7.5); g.quadraticCurveTo(10.3, -4, 8.4, -3.4); g.quadraticCurveTo(6.5, -4, 8.4, -7.5); g.fill();
+  }
+  g.restore();
+
+  if (shape === "moss") {
+    g.save(); g.translate(0, -9); g.rotate(Math.sin(t / 380) * .28);
+    g.strokeStyle = "#2f9b58"; g.lineWidth = 1.3; g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(-.5, -3, 0, -4.5); g.stroke();
+    g.fillStyle = "#b9ffc4"; g.beginPath(); g.ellipse(-2.6, -5, 3, 1.6, -.5, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#8ef0a4"; g.beginPath(); g.ellipse(2.6, -5.4, 3, 1.6, .5, 0, Math.PI * 2); g.fill();
+    g.restore();
+  } else if (shape === "berry") {
+    g.strokeStyle = "#2f8a45"; g.lineWidth = 1.2; g.beginPath(); g.moveTo(0, -9); g.lineTo(.8, -12.8); g.stroke();
+    g.fillStyle = "#4fcf6d"; g.strokeStyle = "#08101a"; g.lineWidth = .8;
+    for (const a of [-1.15, -.4, .4, 1.15]) { g.save(); g.translate(0, -8); g.rotate(a); g.beginPath(); g.ellipse(0, -2.6, 1.5, 3.1, 0, 0, Math.PI * 2); g.fill(); g.stroke(); g.restore(); }
+  } else if (shape === "violet") {
+    const a = t / 650;
+    sparkle(g, Math.cos(a) * 13.5, Math.sin(a) * 4.5 - 7, 1.4 + Math.sin(t / 150) * .5, "#f3e8ff");
+  } else if (shape === "comet") {
+    sparkle(g, 6.2, -7.2, .9 + Math.sin(t / 170) * .35, "#ffffff");
+  } else if (shape === "blaze") {
+    const p = (t / 900) % 1; g.globalAlpha = 1 - p;
+    g.fillStyle = "#ffd36b"; g.beginPath(); g.arc(Math.sin(t / 160) * 3, -14 - p * 8, 1.2 * (1 - p) + .3, 0, Math.PI * 2); g.fill();
+    g.globalAlpha = 1;
+  }
+  g.restore();
+}
+// Facing and short-lived reactions are tracked client-side so faces follow movement and match events.
+const facing = new Map(), moods = new Map();
+function setMood(id, mood, ms) { moods.set(id, { mood, until: performance.now() + ms }); }
+function facingOf(player) {
+  let face = facing.get(player.id);
+  if (!face) {
+    const mid = (state?.map?.width || 48) * (state?.map?.cellSize || 20) / 2;
+    face = { x: player.x < mid ? 1 : -1, y: 0, moving: false }; facing.set(player.id, face);
+  }
+  const target = targets.get(player.id), dx = target ? target.x - target.fromX : 0, dy = target ? target.y - target.fromY : 0, len = Math.hypot(dx, dy);
+  if (len > .4) { face.x = dx / len; face.y = dy / len; }
+  face.moving = len > .4;
+  return face;
+}
+function characterMood(player, players = []) {
+  const flash = moods.get(player.id), fresh = flash && flash.until > performance.now();
+  if (fresh && flash.mood === "hurt") return "hurt";
+  if (player.freezeActive) return "frozen";
+  if (fresh) return flash.mood;
+  if (player.trail?.length) {
+    const rival = players.find((p) => p.id !== player.id), reach = 5 * (state?.map?.cellSize || 20);
+    return rival && Math.hypot(rival.x - player.x, rival.y - player.y) < reach ? "worried" : "determined";
+  }
+  if (player.speedActive || player.character === "blaze") return "determined";
+  return "idle";
+}
+function drawAvatar(player, x, y, time, players) {
+  const face = facingOf(player);
+  paintCharacter(ctx, { character: player.character, color: player.color, x, y, scale: 1.05, time, dir: face, moving: face.moving && time > 0, mood: characterMood(player, players), seed: player.id.charCodeAt(0) || 0, shadow: true });
+  ctx.save();
+  ctx.strokeStyle = colorAlpha(player.color, .7); ctx.lineWidth = 1.3;
+  ctx.beginPath(); ctx.arc(x, y, 17.5, time / 1200, time / 1200 + Math.PI * 1.55); ctx.stroke();
   if (player.shield) {
-    ctx.beginPath(); ctx.arc(x, y, size + 8, 0, Math.PI * 2); ctx.strokeStyle = "#84e6ff"; ctx.lineWidth = 1.8; ctx.shadowColor = "#59dfff"; ctx.shadowBlur = 10; ctx.stroke(); ctx.shadowBlur = 0;
+    ctx.beginPath(); ctx.arc(x, y, 20.5, 0, Math.PI * 2); ctx.strokeStyle = "#84e6ff"; ctx.lineWidth = 1.8; ctx.shadowColor = "#59dfff"; ctx.shadowBlur = 10; ctx.stroke();
   }
   ctx.restore();
 }
@@ -973,7 +1148,7 @@ function draw(time = 0) {
     }
     const pos = interpolate(player.id, player.x, player.y);
     if (visualEffectsEnabled) drawMotionTrail(player, pos);
-    drawAvatar(player, pos.x, pos.y, motionTime, cellSize);
+    drawAvatar(player, pos.x, pos.y, motionTime, players);
   }
   drawEmoteBubbles(players);
   if (state.crown?.active && state.crown.cell) {
@@ -1067,7 +1242,7 @@ function drawEmoteBubbles(players) {
     ctx.save(); ctx.globalAlpha = fade;
     ctx.font = `700 14px Inter, "Segoe UI", "Segoe UI Emoji", sans-serif`;
     const w = Math.max(34, ctx.measureText(bubble.text).width + 18), h = 26;
-    const x = Math.min(Math.max(pos.x, w / 2 + 4), canvas.width - w / 2 - 4), y = Math.max(h + 6, pos.y - 20);
+    const x = Math.min(Math.max(pos.x, w / 2 + 4), canvas.width - w / 2 - 4), y = Math.max(h + 6, pos.y - 25);
     ctx.translate(x, y); ctx.scale(pop, pop);
     ctx.shadowColor = colorAlpha(player.color, .6); ctx.shadowBlur = 10;
     roundedRect(-w / 2, -h, w, h, 9); ctx.fillStyle = "#0f1722f2"; ctx.fill();
@@ -1169,27 +1344,38 @@ socket.addEventListener("message", (event) => {
 
 // Keep scoreboard portraits in sync with the animated arena characters.
 function drawScoreCharacter(target, player, time) {
-  const x = 24, y = 24 + (visualEffectsEnabled ? Math.sin(time / 175 + (player.id.charCodeAt(0) || 0)) * 1.1 : 0);
-  const size = 11.5, color = player.color || "#57e389", shape = player.character || "comet";
-  target.save(); target.shadowColor = color; target.shadowBlur = 9;
-  target.beginPath(); target.arc(x, y, size + 2, 0, Math.PI * 2); target.fillStyle = "#0a111b"; target.fill(); target.shadowBlur = 0;
-  const fill = target.createRadialGradient(x - 4, y - 5, 1, x, y, size + 2); fill.addColorStop(0, "#fff"); fill.addColorStop(.2, color); fill.addColorStop(1, color);
-  target.fillStyle = fill; target.strokeStyle = "#f5fbff"; target.lineWidth = 1.2; target.beginPath();
-  if (shape === "blaze") { target.moveTo(x, y - size - 1); target.lineTo(x + size, y + size - 2); target.lineTo(x, y + size); target.lineTo(x - size, y + size - 2); target.closePath(); }
-  else if (shape === "violet") { for (let i = 0; i < 6; i++) { const a = Math.PI / 3 * i - Math.PI / 6, px = x + Math.cos(a) * size, py = y + Math.sin(a) * size; if (!i) target.moveTo(px, py); else target.lineTo(px, py); } target.closePath(); }
-  else if (shape === "sunny") { for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? size * .72 : size, px = x + Math.cos(a) * r, py = y + Math.sin(a) * r; if (!i) target.moveTo(px, py); else target.lineTo(px, py); } target.closePath(); }
-  else if (shape === "berry") target.roundRect(x - size, y - size, size * 2, size * 2, 4);
-  else if (shape === "moss") target.ellipse(x, y, size, size * .82, -.12, 0, Math.PI * 2);
-  else target.arc(x, y, size, 0, Math.PI * 2);
-  target.fill(); target.stroke(); target.fillStyle = "#12202b"; target.beginPath(); target.arc(x - 3, y - .5, 1.3, 0, Math.PI * 2); target.arc(x + 3, y - .5, 1.3, 0, Math.PI * 2); target.fill();
-  if (shape === "moss") { target.fillStyle = "#d5ffd0"; target.beginPath(); target.ellipse(x + 1, y - 9, 2.1, 4, -.7, 0, Math.PI * 2); target.fill(); }
-  if (shape === "comet") { target.strokeStyle = color; target.lineWidth = 1.6; target.beginPath(); target.moveTo(x - 9, y + 5); target.lineTo(x - 15, y + 9); target.moveTo(x - 10, y + 1); target.lineTo(x - 16, y + 3); target.stroke(); }
-  target.strokeStyle = color; target.lineWidth = 1.5; target.beginPath(); target.arc(x, y, size + 4, time / 1200, time / 1200 + Math.PI * 1.55); target.stroke();
-  if (player.shield) { target.strokeStyle = "#84e6ff"; target.lineWidth = 2; target.beginPath(); target.arc(x, y, size + 6, 0, Math.PI * 2); target.stroke(); }
-  target.restore();
+  const face = facing.get(player.id) || { x: 1, y: 0 };
+  paintCharacter(target, { character: player.character, color: player.color || "#57e389", x: 24, y: 26, scale: .95, time, dir: face, mood: characterMood(player, state?.players), seed: player.id.charCodeAt(0) || 0 });
+  if (player.shield) { target.strokeStyle = "#84e6ff"; target.lineWidth = 2; target.beginPath(); target.arc(24, 25, 21, 0, Math.PI * 2); target.stroke(); }
+}
+// Lobby cards and result rows hold small canvases that are repainted only while they are on screen.
+function paintPortrait(canvas, options) {
+  const g = canvas.getContext("2d"), s = canvas.width / 96;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, canvas.width, canvas.height);
+  paintCharacter(g, { x: 48 * s, y: 54 * s, scale: 2.35 * s, ...options });
+}
+function animatePortraits(time) {
+  const t = visualEffectsEnabled ? time : 0;
+  if (!roomPanel.classList.contains("hidden")) {
+    [...charactersEl.children].forEach((el, index) => {
+      const canvas = el.querySelector("canvas"), character = characterOptions.find((c) => c.id === el.dataset.id);
+      if (!canvas || !character) return;
+      const selected = el.classList.contains("selected"), lively = selected || el.matches(":hover:not(:disabled)");
+      const dir = { x: Math.cos(t / 1700 + index * 1.3), y: Math.sin(t / 2300 + index) * .5 };
+      paintPortrait(canvas, { character: character.id, color: character.color, time: t, dir, moving: lively && !selected, mood: selected ? "happy" : el.disabled ? "idle" : characterMood({ id: character.id, character: character.id }), seed: index });
+    });
+  }
+  if (!$("#resultOverlay").classList.contains("hidden")) {
+    for (const canvas of document.querySelectorAll(".result-avatar")) {
+      const player = state?.players?.find((p) => String(p.id) === canvas.dataset.id);
+      if (!player) continue;
+      const mood = state.draw ? "idle" : state.winnerId === player.id ? "happy" : "worried";
+      paintPortrait(canvas, { character: player.character, color: player.color, time: t, dir: { x: 1, y: .2 }, mood, seed: canvas.dataset.id.charCodeAt(0) || 0 });
+    }
+  }
 }
 function animateScoreCharacters(time = 0) {
-  requestAnimationFrame(animateScoreCharacters); if (!state?.players) return;
+  requestAnimationFrame(animateScoreCharacters); animatePortraits(time); if (!state?.players) return;
   state.players.slice(0, 2).forEach((player, index) => {
     const card = $("#score" + index); if (!card) return;
     let sprite = card.querySelector(".score-avatar");
