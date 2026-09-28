@@ -89,7 +89,7 @@ function openBase(walls, cx, cy, radius = 2) {
   }
 }
 
-export function createGame({ players, seed = Math.random, now = Date.now(), startDelayMs = 0, difficulty = "normal" } = {}) {
+export function createGame({ players, seed = Math.random, now = Date.now(), startDelayMs = 0, difficulty = "normal", arena = "random" } = {}) {
   if (!Array.isArray(players) || players.length !== 2) throw new Error("A match requires exactly two players.");
   const rules = DIFFICULTIES[difficulty] || DIFFICULTIES.normal;
   const width = GAME.width, height = GAME.height, cellSize = GAME.cellSize;
@@ -111,7 +111,7 @@ export function createGame({ players, seed = Math.random, now = Date.now(), star
       };
     }),
     startedAt: now + startDelayMs, endsAt: now + startDelayMs + GAME.durationMs, finished: false, winnerId: null, draw: false,
-    theme: ARENA_THEMES[Math.floor(seed() * ARENA_THEMES.length)],
+    theme: ((roll) => ARENA_THEMES.find((theme) => theme.id === arena) || ARENA_THEMES[Math.floor(roll * ARENA_THEMES.length)])(seed()),
     effects: [], highlights: [], powerUps: [], random: seed,
   crown: { active: false, cell: null, ownerId: null, activateAt: now + startDelayMs + 90_000, moveAt: now + startDelayMs + 135_000, moveAnnounced: false, nextPointAt: null },
     nextPowerUpAt: now + startDelayMs + 6_000 + Math.floor(seed() * 3_001),

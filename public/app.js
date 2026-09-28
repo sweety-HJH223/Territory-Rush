@@ -154,6 +154,7 @@ function renderLobby(message) {
   }).join("");
   const versusBot = message.players.some((p) => p.bot);
   paintDifficulty("room", message.difficulty || "normal", !versusBot && !isHost);
+  paintArena("room", message.arena || "random", !versusBot && !isHost);
   readyButton.classList.toggle("hidden", !message.hostPlayerId || isHost || versusBot);
   readyButton.disabled = !me?.character;
   readyButton.textContent = me?.ready ? "Ready ✓" : "Ready";
@@ -268,8 +269,31 @@ $('.difficulty-options[data-scope="room"]').addEventListener("click", (event) =>
   const button = event.target.closest("button[data-difficulty]");
   if (button && !button.disabled) { setError(""); send("set-difficulty", { difficulty: button.dataset.difficulty }); }
 });
-createButton.addEventListener("click", () => { setError(""); send("create-room", { name: playerName(), difficulty }); });
-botButton.addEventListener("click", () => { setError(""); send("play-bot", { name: playerName(), difficulty }); });
+const ARENA_NAMES = { random: "Random", neon: "Neon Circuit", city: "Downtown Grid", park: "Sunny Park", ocean: "Coral Bay" };
+let arenaChoice = Object.hasOwn(ARENA_NAMES, localStorage.getItem("tr-arena")) ? localStorage.getItem("tr-arena") : "random";
+function paintArena(scope, value, locked = false) {
+  const group = document.querySelector(`.arena-options[data-scope="${scope}"]`);
+  group.closest(".arena-field").querySelector(".arena-name-label").textContent = ARENA_NAMES[value] || "Random";
+  for (const button of group.querySelectorAll("button")) {
+    const active = button.dataset.arena === value;
+    button.classList.toggle("active", active); button.setAttribute("role", "radio"); button.setAttribute("aria-checked", String(active));
+    button.disabled = locked;
+    button.dataset.tip ??= button.title;
+    button.title = locked ? "Only the room host can change the arena" : button.dataset.tip;
+  }
+}
+paintArena("lobby", arenaChoice);
+$('.arena-options[data-scope="lobby"]').addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-arena]");
+  if (!button) return;
+  arenaChoice = button.dataset.arena; localStorage.setItem("tr-arena", arenaChoice); paintArena("lobby", arenaChoice);
+});
+$('.arena-options[data-scope="room"]').addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-arena]");
+  if (button && !button.disabled) { setError(""); send("set-arena", { arena: button.dataset.arena }); }
+});
+createButton.addEventListener("click", () => { setError(""); send("create-room", { name: playerName(), difficulty, arena: arenaChoice }); });
+botButton.addEventListener("click", () => { setError(""); send("play-bot", { name: playerName(), difficulty, arena: arenaChoice }); });
 readyButton.addEventListener("click", () => { setError(""); send("player-ready", { ready: true }); });
 startButton.addEventListener("click", () => { setError(""); send("start-match"); });
 $("#dailyButton").addEventListener("click", () => { setError(""); send("daily-challenge", { name: playerName(), playerKey: dailyPlayerKey }); });

@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "no
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { DIFFICULTIES, GAME, createGame, setPlayerInput, tickGame, territoryPercent } from "./game/core.js";
+import { ARENA_THEMES, DIFFICULTIES, GAME, createGame, setPlayerInput, tickGame, territoryPercent } from "./game/core.js";
 import { updateBotInput } from "./game/bot.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -133,7 +133,7 @@ function playerList(room) {
 }
 
 function lobbyUpdate(room) {
-  broadcast(room, "lobby", { code: room.code, status: room.status, hostPlayerId: room.hostPlayerId || null, difficulty: room.difficulty || "normal", players: playerList(room) });
+  broadcast(room, "lobby", { code: room.code, status: room.status, hostPlayerId: room.hostPlayerId || null, difficulty: room.difficulty || "normal", arena: room.arena || "random", players: playerList(room) });
 }
 
 function sendSnapshot(room) {
@@ -166,7 +166,7 @@ function startMatch(room) {
   const participants = playerListNow.map((p) => ({ id: p.id, name: p.name, character: p.character, color: p.color }));
   if (room.botEnabled && room.bot) participants.push({ ...room.bot, bot: true });
   const countdownMs = 3_000;
-  const options = { players: participants, startDelayMs: countdownMs, difficulty: room.dailyChallenge ? "normal" : room.difficulty };
+  const options = { players: participants, startDelayMs: countdownMs, difficulty: room.dailyChallenge ? "normal" : room.difficulty, arena: room.dailyChallenge ? "random" : room.arena };
   if (room.dailyChallenge) options.seed = seededRandom(room.dailyDay);
   room.game = createGame(options);
   room.dailySaved = false;
@@ -186,6 +186,7 @@ function botEmote(room, emote, now) {
 }
 
 const pickDifficulty = (value) => (Object.hasOwn(DIFFICULTIES, value) ? value : "normal");
+const pickArena = (value) => (ARENA_THEMES.some((theme) => theme.id === value) ? value : "random");
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 function cleanName(value) {
@@ -234,7 +235,7 @@ function handleMessage(socket, message) {
   }
   if (message.type === "play-bot") {
     if (!leaveWaitingRoom(socket)) return;
-    const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, botEnabled: true, difficulty: pickDifficulty(message.difficulty) };
+    const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, botEnabled: true, difficulty: pickDifficulty(message.difficulty), arena: pickArena(message.arena) };
     rooms.set(room.code, room);
     const human = addPlayer(room, socket, message.name);
     const botCharacter = characters[1];
@@ -245,7 +246,7 @@ function handleMessage(socket, message) {
   }
   if (message.type === "create-room") {
     if (!leaveWaitingRoom(socket)) return;
-    const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, difficulty: pickDifficulty(message.difficulty) };
+    const room = { code: makeCode(), players: new Map(), status: "waiting", game: null, difficulty: pickDifficulty(message.difficulty), arena: pickArena(message.arena) };
     rooms.set(room.code, room);
     const host = addPlayer(room, socket, message.name);
     room.hostPlayerId = host.id;
@@ -278,11 +279,12 @@ function handleMessage(socket, message) {
     lobbyUpdate(room);
     return;
   }
-  if (message.type === "set-difficulty" && room.status === "waiting" && !room.dailyChallenge) {
-    if (!room.botEnabled && player.id !== room.hostPlayerId) return send(socket, "error", { message: "Only the room host can change the difficulty." });
-    const difficulty = pickDifficulty(message.difficulty);
-    if (difficulty === room.difficulty) return;
-    room.difficulty = difficulty;
+  if ((message.type === "set-difficulty" || message.type === "set-arena") && room.status === "waiting" && !room.dailyChallenge) {
+    const setting = message.type === "set-arena" ? "arena" : "difficulty";
+    if (!room.botEnabled && player.id !== room.hostPlayerId) return send(socket, "error", { message: `Only the room host can change the ${setting}.` });
+    const value = setting === "arena" ? pickArena(message.arena) : pickDifficulty(message.difficulty);
+    if (value === room[setting]) return;
+    room[setting] = value;
     // The rules changed, so the rival has to confirm again.
     for (const other of room.players.values()) if (other.id !== player.id) other.ready = false;
     lobbyUpdate(room);
