@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="a" x1="10" y1="8" x2="54" y2="57" gradientUnits="userSpaceOnUse"><stop stop-color="#A4FFE0"/><stop offset="1" stop-color="#36CBA6"/></linearGradient>
+    <filter id="g" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feComposite in="SourceGraphic" in2="b" operator="over"/></filter>
+  </defs>
+  <path d="M32 3 56.5 17v30L32 61 7.5 47V17L32 3Z" fill="#12251F" stroke="url(#a)" stroke-width="2.5"/>
+  <path d="M17 19h12v12H17zM33 19h14v12H33zM17 35h12v12H17z" fill="#39D9AE" fill-opacity=".2" stroke="#7AF2CF" stroke-width="1.5"/>
+  <path d="M33 35h14v12H33z" fill="url(#a)" filter="url(#g)"/>
+  <path d="m40 36 2.3 4.2 4.7.7-3.4 3.3.8 4.7-4.4-2.2-4.2 2.2.8-4.7-3.4-3.3 4.7-.7L40 36Z" fill="#092018"/>
+</svg>

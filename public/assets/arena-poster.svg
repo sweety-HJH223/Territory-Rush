@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 430" fill="none">
+  <defs>
+    <linearGradient id="floor" x1="150" y1="70" x2="680" y2="390" gradientUnits="userSpaceOnUse"><stop stop-color="#24394A"/><stop offset="1" stop-color="#111A27"/></linearGradient>
+    <linearGradient id="wall" x1="170" y1="94" x2="680" y2="370" gradientUnits="userSpaceOnUse"><stop stop-color="#9FB5C7"/><stop offset=".35" stop-color="#536C83"/><stop offset="1" stop-color="#26374A"/></linearGradient>
+    <linearGradient id="mint" x1="170" y1="130" x2="408" y2="317" gradientUnits="userSpaceOnUse"><stop stop-color="#84FFE0" stop-opacity=".8"/><stop offset="1" stop-color="#2BD6B0" stop-opacity=".25"/></linearGradient>
+    <linearGradient id="violet" x1="444" y1="153" x2="672" y2="320" gradientUnits="userSpaceOnUse"><stop stop-color="#C3A2FF" stop-opacity=".8"/><stop offset="1" stop-color="#7954CF" stop-opacity=".25"/></linearGradient>
+    <radialGradient id="halo" cx="0" cy="0" r="1" gradientTransform="matrix(0 195 -330 0 420 213)" gradientUnits="userSpaceOnUse"><stop stop-color="#5DE6D0" stop-opacity=".18"/><stop offset="1" stop-color="#10202D" stop-opacity="0"/></radialGradient>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><path d="M28 0H0v28" stroke="#B8D5E9" stroke-opacity=".08" stroke-width="1"/></pattern>
+  </defs>
+  <ellipse cx="420" cy="215" rx="355" ry="190" fill="url(#halo)"/>
+  <path d="m88 170 129-75 427 0 112 66-3 144-131 75-418 0-117-68 1-142Z" fill="#070D16" fill-opacity=".65"/>
+  <path d="m113 156 121-70h399l117 67-1 139-120 69H231l-119-66 1-139Z" fill="url(#floor)" stroke="#64788C" stroke-opacity=".6" stroke-width="2"/>
+  <path d="m113 156 121-70h399l117 67-1 139-120 69H231l-119-66 1-139Z" fill="url(#grid)"/>
+  <path d="m113 156 121-70v24l-93 54v113l-28-16 1-139Z" fill="#71889C" fill-opacity=".32"/>
+  <path d="m632 86 118 67v139l-29-16 1-113-90-52V86Z" fill="#A7B7C4" fill-opacity=".28"/>
+  <path d="m141 163 91-53h170v51H258v101h-67v-79l-50-20Z" fill="url(#mint)" stroke="#67F5D0" stroke-opacity=".55" stroke-width="2"/>
+  <path d="m439 111h168l90 52-1 113h-83v-62h-77v-52h-97v-51Z" fill="url(#violet)" stroke="#C8AAFF" stroke-opacity=".55" stroke-width="2"/>
+  <path d="M233 161h55v50h-55zM310 211h59v54h-59zM382 148h47v51h-47zM473 211h57v53h-57zM545 160h66v51h-66zM616 226h54v50h-54z" fill="#121C29" stroke="url(#wall)" stroke-width="5"/>
+  <path d="M231 158h58M308 208h63M380 145h51M471 208h61M543 157h70M614 223h58" stroke="#E5F3FF" stroke-opacity=".55" stroke-width="2"/>
+  <path d="M196 190h67v42h-67z" fill="#44E1B7" fill-opacity=".15" stroke="#70F6D3" stroke-width="2" filter="url(#glow)"/>
+  <path d="M581 210h70v43h-70z" fill="#A47CF1" fill-opacity=".18" stroke="#C7A8FF" stroke-width="2" filter="url(#glow)"/>
+  <path d="M260 285c39-38 45-71 82-71 31 0 41 40 72 40 40 0 43-49 78-49 28 0 37 36 72 36" stroke="#FFE27C" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 9" filter="url(#glow)"/>
+  <circle cx="260" cy="285" r="9" fill="#67F5D0" stroke="#E2FFF6" stroke-width="3" filter="url(#glow)"/>
+  <circle cx="564" cy="241" r="9" fill="#C2A3FF" stroke="#F0E8FF" stroke-width="3" filter="url(#glow)"/>
+  <path d="m417 196 4.1 8.3 9.2 1.3-6.7 6.5 1.6 9.2-8.2-4.3-8.2 4.3 1.6-9.2-6.7-6.5 9.2-1.3 4.1-8.3Z" fill="#FFE27C" filter="url(#glow)"/>
+  <path d="M110 324h620" stroke="#9BB5C9" stroke-opacity=".24"/>
+  <circle cx="147" cy="337" r="3" fill="#5DE6D0"/><circle cx="693" cy="337" r="3" fill="#B797FF"/>
+</svg>

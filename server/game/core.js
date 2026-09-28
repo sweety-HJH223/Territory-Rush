@@ -1,0 +1,418 @@
+// Authoritative, dependency-free Territory Rush rules.
+// Players move in continuous map coordinates; territory and trails occupy cells.
+
+export const GAME = Object.freeze({
+  width: 48,
+  height: 32,
+  cellSize: 20,
+  durationMs: 180_000,
+  tickMs: 50,
+  playerRadius: 7,
+  baseSpeed: 150,
+  penaltyFraction: 0.12,
+  maxCaptureFraction: 0.09,
+  maxBreachCells: 6,
+});
+export const ARENA_THEMES = [
+  { id: "neon", name: "Neon Circuit", floor: ["#1a2a37", "#101923"], wall: ["#526176", "#273345"], accent: "#56edc0" },
+  { id: "copper", name: "Copper Vault", floor: ["#30251f", "#171917"], wall: ["#74604e", "#39302a"], accent: "#ffb45f" },
+  { id: "frost", name: "Frost Byte", floor: ["#1c3040", "#101b2b"], wall: ["#637b91", "#2d435b"], accent: "#8eeaff" },
+];
+
+const key = (x, y) => `${x},${y}`;
+const parseKey = (value) => value.split(",").map(Number);
+const inBounds = (map, x, y) => x >= 0 && y >= 0 && x < map.width && y < map.height;
+const center = (map, x, y) => ({ x: (x + 0.5) * map.cellSize, y: (y + 0.5) * map.cellSize });
+const POWER_TYPES = ["speed", "shield", "freeze", "bonus"];
+
+function carveMaze(width, height, rng) {
+  // Odd-sized logical maze cells become 2x2 physical-cell rooms and corridors.
+  const grid = Array.from({ length: height }, () => Array(width).fill(true));
+  const start = { x: 1, y: 1 };
+  grid[start.y][start.x] = false;
+  const stack = [start];
+  while (stack.length) {
+    const at = stack[stack.length - 1];
+    const options = [[2, 0], [-2, 0], [0, 2], [0, -2]]
+      .map(([dx, dy]) => ({ x: at.x + dx, y: at.y + dy, dx, dy }))
+      .filter((p) => p.x > 0 && p.y > 0 && p.x < width - 1 && p.y < height - 1 && grid[p.y][p.x]);
+    if (!options.length) { stack.pop(); continue; }
+    const next = options[Math.floor(rng() * options.length)];
+    grid[at.y + next.dy / 2][at.x + next.dx / 2] = false;
+    grid[next.y][next.x] = false;
+    stack.push({ x: next.x, y: next.y });
+  }
+  // Widen the corridors and rooms while retaining a maze-like structure.
+  const walls = Array.from({ length: height }, (_, y) =>
+    Array.from({ length: width }, (_, x) => {
+      if (x === 0 || y === 0 || x === width - 1 || y === height - 1) return true;
+      return grid[Math.floor(y / 2) * 2 + 1]?.[Math.floor(x / 2) * 2 + 1] ?? true;
+    }));
+  for (let y = 1; y < height - 1; y++) for (let x = 1; x < width - 1; x++) {
+    if (!grid[y][x]) walls[y][x] = false;
+  }
+  return walls;
+}
+
+function openBase(walls, cx, cy, radius = 2) {
+  for (let y = cy - radius; y <= cy + radius; y++) for (let x = cx - radius; x <= cx + radius; x++) {
+    if (y > 0 && x > 0 && y < walls.length - 1 && x < walls[0].length - 1) walls[y][x] = false;
+  }
+}
+
+export function createGame({ players, seed = Math.random, now = Date.now(), startDelayMs = 0 } = {}) {
+  if (!Array.isArray(players) || players.length !== 2) throw new Error("A match requires exactly two players.");
+  const width = GAME.width, height = GAME.height, cellSize = GAME.cellSize;
+  const walls = carveMaze(width, height, seed);
+  const bases = [{ x: 4, y: 4 }, { x: width - 5, y: height - 5 }];
+  bases.forEach((b) => openBase(walls, b.x, b.y));
+  const state = {
+    width, height, cellSize, walls,
+    players: players.map((p, i) => {
+      const b = bases[i];
+      return {
+        id: p.id, name: p.name ?? `Player ${i + 1}`, character: p.character ?? "", color: p.color ?? (i ? "#ef476f" : "#06d6a0"),
+        x: center({ cellSize }, b.x, b.y).x, y: center({ cellSize }, b.x, b.y).y,
+        base: { ...b }, input: { up: false, down: false, left: false, right: false },
+        territory: new Set(), trail: [], trailSet: new Set(), trailStart: null, shield: false,
+        speedUntil: 0, freezeUntil: 0, connected: true, bot: Boolean(p.bot), touchingTrail: false,
+        stats: { claims: 0, trailCuts: 0, powerUpsCollected: 0, cellsClaimed: 0, crownPoints: 0 },
+      };
+    }),
+    startedAt: now + startDelayMs, endsAt: now + startDelayMs + GAME.durationMs, finished: false, winnerId: null, draw: false,
+    theme: ARENA_THEMES[Math.floor(seed() * ARENA_THEMES.length)],
+    effects: [], highlights: [], powerUps: [], random: seed,
+  crown: { active: false, cell: null, ownerId: null, activateAt: now + startDelayMs + 90_000, moveAt: now + startDelayMs + 135_000, moveAnnounced: false, nextPointAt: null },
+    nextPowerUpAt: now + startDelayMs + 15_000 + Math.floor(seed() * 5_001),
+  };
+  state.players.forEach((p) => paintBase(state, p));
+  state.crown.cell = findCrownCell(state, Math.floor(width / 2), Math.floor(height / 2));
+  return state;
+}
+
+function findCrownCell(state, targetX, targetY) {
+  const occupied = new Set(state.players.flatMap((player) => [...player.territory]));
+  const choices = [], fallback = [];
+  for (let y = 1; y < state.height - 1; y++) for (let x = 1; x < state.width - 1; x++) {
+    const packed = key(x, y);
+    if (!state.walls[y][x]) {
+      const choice = { x, y, d: (x - targetX) ** 2 + (y - targetY) ** 2 };
+      fallback.push(choice);
+      if (!occupied.has(packed)) choices.push(choice);
+    }
+  }
+  choices.sort((a, b) => a.d - b.d);
+  const cell = choices[0] || fallback.sort((a, b) => a.d - b.d)[0];
+  if (!cell) return { x: targetX, y: targetY };
+  if (!choices.length) for (const player of state.players) player.territory.delete(key(cell.x, cell.y));
+  return { x: cell.x, y: cell.y };
+}
+
+function crownController(state) {
+  if (!state.crown.active || !state.crown.cell) return null;
+  const packed = key(state.crown.cell.x, state.crown.cell.y);
+  return state.players.find((player) => player.territory.has(packed))?.id ?? null;
+}
+
+function tickCrown(state, now) {
+  const crown = state.crown;
+  if (!crown.active && now >= crown.activateAt) {
+    crown.active = true;
+    crown.cell = findCrownCell(state, Math.floor(state.width / 2), Math.floor(state.height / 2));
+    state.effects.push({ type: "crown-active", cell: crown.cell });
+  }
+  if (crown.active && crown.moveAt && now >= crown.moveAt - 5_000 && !crown.moveAnnounced) {
+    crown.moveAnnounced = true;
+    state.effects.push({ type: "crown-moving", inMs: Math.max(0, crown.moveAt - now) });
+  }
+  if (crown.active && crown.moveAt && now >= crown.moveAt) {
+    crown.cell = findCrownCell(state, Math.floor(state.width * .78), Math.floor(state.height * .78));
+    crown.moveAt = null;
+    crown.ownerId = null;
+    crown.nextPointAt = null;
+    state.effects.push({ type: "crown-moved", cell: crown.cell });
+  }
+  if (!crown.active) return;
+  const controller = crownController(state);
+  if (controller !== crown.ownerId) {
+    crown.ownerId = controller;
+    crown.nextPointAt = controller ? now + 5_000 : null;
+    if (controller) state.effects.push({ type: "crown-control", playerId: controller });
+  } else if (controller && now >= crown.nextPointAt) {
+    const player = state.players.find((item) => item.id === controller);
+    player.stats.crownPoints++;
+    crown.nextPointAt = now + 5_000;
+    state.effects.push({ type: "crown-point", playerId: controller, points: player.stats.crownPoints });
+  }
+}
+
+function matchScore(player) { return player.territory.size + (player.stats.crownPoints || 0) * 4; }
+
+function paintBase(state, player) {
+  for (let y = player.base.y - 2; y <= player.base.y + 2; y++) for (let x = player.base.x - 2; x <= player.base.x + 2; x++) {
+    if (inBounds(state, x, y) && !state.walls[y][x]) player.territory.add(key(x, y));
+  }
+}
+
+export function cellAt(state, x, y) {
+  return { x: Math.floor(x / state.cellSize), y: Math.floor(y / state.cellSize) };
+}
+
+function collidesWithWall(state, x, y) {
+  const r = GAME.playerRadius, s = state.cellSize;
+  const minX = Math.floor((x - r) / s), maxX = Math.floor((x + r) / s);
+  const minY = Math.floor((y - r) / s), maxY = Math.floor((y + r) / s);
+  for (let cy = minY; cy <= maxY; cy++) for (let cx = minX; cx <= maxX; cx++) {
+    if (!inBounds(state, cx, cy) || state.walls[cy][cx]) {
+      const nx = Math.max(cx * s, Math.min(x, (cx + 1) * s));
+      const ny = Math.max(cy * s, Math.min(y, (cy + 1) * s));
+      if ((x - nx) ** 2 + (y - ny) ** 2 < r ** 2) return true;
+    }
+  }
+  return false;
+}
+
+function movePlayer(state, player, dt, now) {
+  const input = player.input;
+  const dx = Number(input.right) - Number(input.left), dy = Number(input.down) - Number(input.up);
+  if (!dx && !dy) return;
+  const length = Math.hypot(dx, dy), speed = player.speedUntil > now ? GAME.baseSpeed * 1.6 : GAME.baseSpeed;
+  const mx = dx / length * speed * dt, my = dy / length * speed * dt;
+  // Axis-separated collision allows sliding along walls.
+  const nx = player.x + mx;
+  if (!collidesWithWall(state, nx, player.y)) player.x = nx;
+  const ny = player.y + my;
+  if (!collidesWithWall(state, player.x, ny)) player.y = ny;
+}
+
+function otherOwner(state, player, cell) {
+  return state.players.find((candidate) => candidate !== player && candidate.territory.has(cell));
+}
+
+function ownedRoute(state, player, fromKey, toKey) {
+  const queue = [fromKey], previous = new Map([[fromKey, null]]);
+  for (let i = 0; i < queue.length; i++) {
+    const here = queue[i];
+    if (here === toKey) break;
+    const [x, y] = parseKey(here);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const next = key(x + dx, y + dy);
+      if (player.territory.has(next) && !previous.has(next)) { previous.set(next, here); queue.push(next); }
+    }
+  }
+  if (!previous.has(toKey)) return [];
+  const path = [];
+  for (let at = toKey; at; at = previous.get(at)) path.push(at);
+  return path.reverse();
+}
+
+function insidePolygon(x, y, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i], b = polygon[j];
+    if (((a.y > y) !== (b.y > y)) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+function captureLoop(state, player, closingCell) {
+  const closing = parseKey(closingCell);
+  const startBoundary = player.trailStart || player.trail[0];
+  const route = ownedRoute(state, player, startBoundary, closingCell);
+  const boundary = [
+    ...player.trail.map((packed) => { const [x, y] = parseKey(packed); return { x: x + 0.5, y: y + 0.5 }; }),
+    { x: closing[0] + 0.5, y: closing[1] + 0.5 },
+    ...route.slice(0, -1).reverse().map((packed) => { const [x, y] = parseKey(packed); return { x: x + 0.5, y: y + 0.5 }; }),
+  ];
+  const outline = new Set(player.trailSet);
+  outline.add(closingCell);
+  const enemyCells = new Set(state.players.filter((p) => p !== player).flatMap((p) => [...p.territory]));
+  const capturable = [], breached = [];
+  const paintable = state.width * state.height - state.walls.flat().filter(Boolean).length;
+  const captureLimit = Math.max(12, Math.floor(paintable * GAME.maxCaptureFraction));
+  const distanceToOutline = (x, y) => {
+    let closest = Infinity;
+    for (const packed of outline) {
+      const [ox, oy] = parseKey(packed);
+      closest = Math.min(closest, Math.abs(x - ox) + Math.abs(y - oy));
+      if (closest <= 1) return closest;
+    }
+    return closest;
+  };
+  for (let y = 0; y < state.height; y++) for (let x = 0; x < state.width; x++) {
+    const k = key(x, y);
+    if (state.walls[y][x] || player.territory.has(k) || !(outline.has(k) || insidePolygon(x + 0.5, y + 0.5, boundary))) continue;
+    if (!enemyCells.has(k)) capturable.push({ k, distance: distanceToOutline(x, y) });
+    else {
+      const rival = state.players.find((p) => p !== player && p.territory.has(k));
+      if (rival && (Math.abs(x - rival.base.x) > 2 || Math.abs(y - rival.base.y) > 2)) breached.push({ k, rival, distance: distanceToOutline(x, y) });
+    }
+  }
+  capturable.sort((a, b) => a.distance - b.distance || a.k.localeCompare(b.k));
+  breached.sort((a, b) => a.distance - b.distance || a.k.localeCompare(b.k));
+  const capturedCells = capturable.slice(0, captureLimit).map(({ k }) => k);
+  for (const packed of capturedCells) player.territory.add(packed);
+  const breachCells = breached.slice(0, GAME.maxBreachCells);
+  for (const { k, rival } of breachCells) { rival.territory.delete(k); player.territory.add(k); }
+  const claimed = capturedCells.length + breachCells.length;
+  player.trail = []; player.trailSet.clear(); player.trailStart = null;
+  player.route = [];
+  if (claimed) { player.stats.claims++; player.stats.cellsClaimed += claimed; }
+  state.effects.push({ type: "claim", playerId: player.id, cells: claimed, breached: breachCells.length });
+  if (claimed) {
+    const item = { kind: "capture", playerId: player.id, name: player.name, color: player.color, trail: [...boundary.map(({ x, y }) => key(Math.floor(x), Math.floor(y)))], cells: [...capturedCells, ...breachCells.map(({ k }) => k)], score: claimed };
+    const previous = state.highlights.find((entry) => entry.kind === "capture");
+    if (!previous || claimed > previous.score) state.highlights = [...state.highlights.filter((entry) => entry.kind !== "capture"), item];
+    state.effects.push({ type: "capture-replay", ...item });
+  }
+}
+
+function traceTrail(state, player) {
+  const { x, y } = cellAt(state, player.x, player.y);
+  if (!inBounds(state, x, y)) return;
+  const k = key(x, y);
+  if (player.territory.has(k)) {
+    if (player.trail.length) captureLoop(state, player, k);
+    return;
+  }
+  if (state.walls[y][x] || player.trailSet.has(k)) return;
+  // Crossing the opponent's claimed land does not convert it; it remains a boundary.
+  if (!player.trail.length) {
+    const neighbor = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+      .map(([dx, dy]) => key(x + dx, y + dy))
+      .find((candidate) => player.territory.has(candidate));
+    player.trailStart = neighbor || player.base && key(player.base.x, player.base.y);
+  }
+  player.trail.push(k); player.trailSet.add(k);
+}
+
+function loseTerritory(state, player) {
+  const target = Math.max(1, Math.floor(player.territory.size * GAME.penaltyFraction));
+  const candidates = [...player.territory].filter((k) => {
+    const [x, y] = parseKey(k);
+    return Math.abs(x - player.base.x) > 2 || Math.abs(y - player.base.y) > 2;
+  }).map((k) => {
+    const [x, y] = parseKey(k);
+    const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
+      const nx = x + dx, ny = y + dy;
+      return !inBounds(state, nx, ny) || state.walls[ny][nx] || !player.territory.has(key(nx, ny));
+    });
+    return { k, edge };
+  }).sort((a, b) => Number(b.edge) - Number(a.edge));
+  for (const item of candidates.slice(0, target)) player.territory.delete(item.k);
+}
+
+function penalize(state, owner, now, hitCell) {
+  if (owner.shield) { owner.shield = false; state.effects.push({ type: "shield-block", playerId: owner.id }); return; }
+  const cutTrail = [...owner.trail];
+  loseTerritory(state, owner);
+  owner.stats.trailCuts++;
+  owner.trail = []; owner.trailSet.clear(); owner.trailStart = null;
+  owner.route = [];
+  const spawn = center(state, owner.base.x, owner.base.y);
+  owner.x = spawn.x; owner.y = spawn.y;
+  const effect = { type: "penalty", playerId: owner.id, at: now, trail: cutTrail, color: owner.color, hitCell };
+  state.effects.push(effect);
+  if (cutTrail.length) {
+    const previous = state.highlights.find((entry) => entry.kind === "cut");
+    if (!previous || cutTrail.length > previous.score) state.highlights = [...state.highlights.filter((entry) => entry.kind !== "cut"), { kind: "cut", playerId: owner.id, name: owner.name, color: owner.color, trail: cutTrail, hitCell, score: cutTrail.length }];
+  }
+}
+
+function spawnPowerUp(state, now) {
+  const existing = new Set(state.powerUps.map((power) => power.type));
+  const available = POWER_TYPES.filter((type) => !existing.has(type));
+  if (!available.length) return;
+  const candidates = [];
+  for (let y = 1; y < state.height - 1; y++) for (let x = 1; x < state.width - 1; x++) {
+    const k = key(x, y);
+    if (state.walls[y][x] || state.players.some((p) => p.territory.has(k) || p.trailSet.has(k))) continue;
+    candidates.push({ x, y });
+  }
+  if (!candidates.length) return;
+  const random = state.random;
+  const cell = candidates[Math.floor(random() * candidates.length)];
+  const type = available[Math.floor(random() * available.length)];
+  const power = { id: `${now}-${Math.floor(random() * 1e9)}`, type, ...cell, expiresAt: now + 20_000 };
+  state.powerUps.push(power);
+  state.effects.push({ type: "power-spawn", powerUp: { ...power } });
+}
+
+function grantBonus(state, player) {
+  const origin = cellAt(state, player.x, player.y);
+  const occupied = new Set(state.players.flatMap((p) => [...p.territory]));
+  const candidates = [];
+  for (let y = 1; y < state.height - 1; y++) for (let x = 1; x < state.width - 1; x++) {
+    const k = key(x, y);
+    if (!state.walls[y][x] && !occupied.has(k) && !player.trailSet.has(k)) candidates.push({ x, y, k, d: (x - origin.x) ** 2 + (y - origin.y) ** 2 });
+  }
+  candidates.sort((a, b) => a.d - b.d);
+  const gained = candidates.slice(0, 9);
+  for (const cell of gained) player.territory.add(cell.k);
+  if (gained.length) { player.stats.claims++; player.stats.cellsClaimed += gained.length; }
+  state.effects.push({ type: "claim", playerId: player.id, cells: gained.length, bonus: true });
+}
+
+function collectPowerUps(state, player, now) {
+  const { x, y } = cellAt(state, player.x, player.y);
+  const index = state.powerUps.findIndex((power) => power.x === x && power.y === y);
+  if (index < 0) return;
+  const [power] = state.powerUps.splice(index, 1);
+  if (power.type === "speed") player.speedUntil = Math.max(player.speedUntil, now + 5_000);
+  if (power.type === "shield") player.shield = true;
+  if (power.type === "freeze") {
+    const opponent = state.players.find((p) => p !== player);
+    if (opponent) opponent.freezeUntil = Math.max(opponent.freezeUntil, now + 3_000);
+  }
+  if (power.type === "bonus") grantBonus(state, player);
+  player.stats.powerUpsCollected++;
+  state.effects.push({ type: "power-collect", powerType: power.type, playerId: player.id });
+}
+
+function tickPowerUps(state, now) {
+  const expired = state.powerUps.filter((power) => power.expiresAt <= now);
+  state.powerUps = state.powerUps.filter((power) => power.expiresAt > now);
+  for (const power of expired) state.effects.push({ type: "power-expire", powerType: power.type });
+  if (now >= state.nextPowerUpAt) {
+    spawnPowerUp(state, now);
+    state.nextPowerUpAt = now + 15_000 + Math.floor(state.random() * 5_001);
+  }
+}
+
+export function territoryPercent(state, player) {
+  const paintable = state.width * state.height - state.walls.flat().filter(Boolean).length;
+  return paintable ? player.territory.size / paintable * 100 : 0;
+}
+
+export function tickGame(state, now = Date.now()) {
+  if (state.finished) return state;
+  if (now < state.startedAt) return state;
+  const dt = Math.min(GAME.tickMs, Math.max(0, now - (state.lastTickAt ?? now))) / 1000;
+  state.lastTickAt = now;
+  tickPowerUps(state, now);
+  tickCrown(state, now);
+  for (const player of state.players) if (player.connected) movePlayer(state, player, dt, now);
+  for (const player of state.players) if (player.connected) collectPowerUps(state, player, now);
+  for (const player of state.players) if (player.connected && player.freezeUntil <= now) traceTrail(state, player);
+  for (let i = 0; i < state.players.length; i++) {
+    const toucher = state.players[i], victim = state.players[1 - i];
+    const position = cellAt(state, toucher.x, toucher.y);
+    const touching = victim.trailSet.has(key(position.x, position.y));
+    if (touching && !toucher.touchingTrail) penalize(state, victim, now, key(position.x, position.y));
+    toucher.touchingTrail = touching;
+  }
+  if (now >= state.endsAt) {
+    const [a, b] = state.players.map(matchScore);
+    state.finished = true; state.draw = a === b;
+    state.winnerId = state.draw ? null : state.players[a > b ? 0 : 1].id;
+    state.effects.push({ type: "finished", winnerId: state.winnerId, draw: state.draw });
+  }
+  return state;
+}
+
+export function setPlayerInput(state, playerId, input) {
+  const player = state.players.find((p) => p.id === playerId);
+  if (!player) return false;
+  for (const direction of ["up", "down", "left", "right"]) player.input[direction] = input?.[direction] === true;
+  return true;
+}
