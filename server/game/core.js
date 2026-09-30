@@ -12,6 +12,14 @@ export const GAME = Object.freeze({
   penaltyFraction: 0.12,
   maxCaptureFraction: 0.09,
   maxBreachCells: 6,
+  // A trail tile turns solid after hardenAfterMs, then cracks back to a cuttable tile hardenForMs later,
+  // so a hardened trail can block a rival but never trap them for long.
+  hardenAfterMs: 4_000,
+  hardenForMs: 6_000,
+  // Each player's echo replays their own movement from this long ago, and respawns on every multiple of it.
+  echoDelayMs: 30_000,
+  // The Rewind pickup brings the echo back immediately, following this far behind its owner until the next wave.
+  rewindDelayMs: 10_000,
 });
 // Per-match rules; "normal" matches GAME so the Daily Challenge stays comparable.
 export const DIFFICULTIES = Object.freeze({
@@ -30,7 +38,7 @@ const key = (x, y) => `${x},${y}`;
 const parseKey = (value) => value.split(",").map(Number);
 const inBounds = (map, x, y) => x >= 0 && y >= 0 && x < map.width && y < map.height;
 const center = (map, x, y) => ({ x: (x + 0.5) * map.cellSize, y: (y + 0.5) * map.cellSize });
-const POWER_TYPES = ["speed", "shield", "freeze", "bonus"];
+const POWER_TYPES = ["speed", "shield", "freeze", "bonus", "rewind", "lock"];
 
 function carveMaze(width, height, rng) {
   // Odd-sized logical maze cells become 2x2 physical-cell rooms and corridors.
@@ -105,9 +113,10 @@ export function createGame({ players, seed = Math.random, now = Date.now(), star
         id: p.id, name: p.name ?? `Player ${i + 1}`, character: p.character ?? "", color: p.color ?? (i ? "#ef476f" : "#06d6a0"),
         x: center({ cellSize }, b.x, b.y).x, y: center({ cellSize }, b.x, b.y).y,
         base: { ...b }, input: { up: false, down: false, left: false, right: false },
-        territory: new Set(), trail: [], trailSet: new Set(), trailStart: null, shield: false,
+        territory: new Set(), trail: [], trailSet: new Set(), trailTimes: new Map(), trailStart: null, shield: false,
+        history: [], echo: null, echoLockedUntil: 0,
         baseSpeed: rules.speed, speedUntil: 0, freezeUntil: 0, connected: true, bot: Boolean(p.bot), touchingTrail: false,
-        stats: { claims: 0, trailCuts: 0, powerUpsCollected: 0, cellsClaimed: 0, crownPoints: 0 },
+        stats: { claims: 0, trailCuts: 0, powerUpsCollected: 0, cellsClaimed: 0, crownPoints: 0, echoCells: 0, echoCuts: 0, echoesBroken: 0 },
       };
     }),
     startedAt: now + startDelayMs, endsAt: now + startDelayMs + GAME.durationMs, finished: false, winnerId: null, draw: false,
@@ -211,12 +220,42 @@ export function cellAt(state, x, y) {
   return { x: Math.floor(x / state.cellSize), y: Math.floor(y / state.cellSize) };
 }
 
-function collidesWithWall(state, x, y) {
+function clearTrail(entity) {
+  entity.trail = []; entity.trailSet.clear(); entity.trailTimes.clear(); entity.trailStart = null;
+}
+
+export function isHardened(entity, cell, now) {
+  const placedAt = entity.trailTimes?.get(cell);
+  if (placedAt === undefined) return false;
+  const age = now - placedAt;
+  return age >= GAME.hardenAfterMs && age < GAME.hardenAfterMs + GAME.hardenForMs;
+}
+
+// [cell, msUntilItCracks] for every hardened tile of a player's or echo's trail.
+export function hardenedTrail(entity, now) {
+  const hard = [];
+  for (const cell of entity.trail) if (isHardened(entity, cell, now)) hard.push([cell, GAME.hardenAfterMs + GAME.hardenForMs - (now - entity.trailTimes.get(cell))]);
+  return hard;
+}
+
+const trailOwners = (player) => (player.echo?.alive ? [player, player.echo] : [player]);
+
+// Cells this player cannot walk through: the hardened trail tiles of every rival and their echo.
+export function solidCellsFor(state, player, now) {
+  const solid = new Set();
+  for (const rival of state.players) {
+    if (rival.id === player.id) continue;
+    for (const entity of trailOwners(rival)) for (const cell of entity.trail) if (isHardened(entity, cell, now)) solid.add(cell);
+  }
+  return solid;
+}
+
+function collidesWithWall(state, x, y, solid = null) {
   const r = GAME.playerRadius, s = state.cellSize;
   const minX = Math.floor((x - r) / s), maxX = Math.floor((x + r) / s);
   const minY = Math.floor((y - r) / s), maxY = Math.floor((y + r) / s);
   for (let cy = minY; cy <= maxY; cy++) for (let cx = minX; cx <= maxX; cx++) {
-    if (!inBounds(state, cx, cy) || state.walls[cy][cx]) {
+    if (!inBounds(state, cx, cy) || state.walls[cy][cx] || solid?.has(key(cx, cy))) {
       const nx = Math.max(cx * s, Math.min(x, (cx + 1) * s));
       const ny = Math.max(cy * s, Math.min(y, (cy + 1) * s));
       if ((x - nx) ** 2 + (y - ny) ** 2 < r ** 2) return true;
@@ -231,14 +270,14 @@ export function playerSpeed(player, now) {
 }
 
 // Returns how much of the distance could not be travelled because a wall was in the way.
-function moveAxis(state, player, axis, distance) {
+function moveAxis(state, player, axis, distance, solid) {
   // Small sub-steps let players slide flush against walls instead of stopping a whole step short.
   const steps = Math.ceil(Math.abs(distance) / 2);
   if (!steps) return 0;
   const step = distance / steps;
   for (let i = 0; i < steps; i++) {
     const nx = axis === "x" ? player.x + step : player.x, ny = axis === "y" ? player.y + step : player.y;
-    if (collidesWithWall(state, nx, ny)) return Math.abs(step) * (steps - i);
+    if (collidesWithWall(state, nx, ny, solid)) return Math.abs(step) * (steps - i);
     player.x = nx; player.y = ny;
   }
   return 0;
@@ -246,27 +285,25 @@ function moveAxis(state, player, axis, distance) {
 
 // Corner assist: when a straight move clips an obstacle corner, slide toward the lane centre so the
 // player rounds the corner instead of grinding against it.
-function assistCorner(state, player, axis, blocked) {
+function assistCorner(state, player, axis, blocked, solid) {
   const other = axis === "x" ? "y" : "x", centre = (Math.floor(player[other] / state.cellSize) + .5) * state.cellSize;
   const offset = centre - player[other];
   if (Math.abs(offset) < .01) return;
-  moveAxis(state, player, other, Math.sign(offset) * Math.min(Math.abs(offset), blocked));
+  moveAxis(state, player, other, Math.sign(offset) * Math.min(Math.abs(offset), blocked), solid);
 }
 
-function movePlayer(state, player, dt, now) {
+function movePlayer(state, player, dt, now, hardCells) {
   const input = player.input;
   const dx = Number(input.right) - Number(input.left), dy = Number(input.down) - Number(input.up);
   if (!dx && !dy) return;
+  // A player already overlapping a tile that just hardened may walk out of it freely.
+  const solid = hardCells?.size && !collidesWithWall(state, player.x, player.y, hardCells) ? hardCells : null;
   const length = Math.hypot(dx, dy), speed = playerSpeed(player, now);
   // Axis-separated collision allows sliding along walls.
-  const blockedX = dx ? moveAxis(state, player, "x", dx / length * speed * dt) : 0;
-  const blockedY = dy ? moveAxis(state, player, "y", dy / length * speed * dt) : 0;
-  if (blockedX && !dy) assistCorner(state, player, "x", blockedX);
-  if (blockedY && !dx) assistCorner(state, player, "y", blockedY);
-}
-
-function otherOwner(state, player, cell) {
-  return state.players.find((candidate) => candidate !== player && candidate.territory.has(cell));
+  const blockedX = dx ? moveAxis(state, player, "x", dx / length * speed * dt, solid) : 0;
+  const blockedY = dy ? moveAxis(state, player, "y", dy / length * speed * dt, solid) : 0;
+  if (blockedX && !dy) assistCorner(state, player, "x", blockedX, solid);
+  if (blockedY && !dx) assistCorner(state, player, "y", blockedY, solid);
 }
 
 function ownedRoute(state, player, fromKey, toKey) {
@@ -306,7 +343,8 @@ function captureLoop(state, player, closingCell) {
   ];
   const outline = new Set(player.trailSet);
   outline.add(closingCell);
-  const enemyCells = new Set(state.players.filter((p) => p !== player).flatMap((p) => [...p.territory]));
+  // Rivals are matched by id because an echo claims for its owner, whose player object is not the echo.
+  const enemyCells = new Set(state.players.filter((p) => p.id !== player.id).flatMap((p) => [...p.territory]));
   const capturable = [], breached = [];
   const paintable = state.width * state.height - state.walls.flat().filter(Boolean).length;
   const captureLimit = Math.max(12, Math.floor(paintable * GAME.maxCaptureFraction));
@@ -324,7 +362,7 @@ function captureLoop(state, player, closingCell) {
     if (state.walls[y][x] || player.territory.has(k) || !(outline.has(k) || insidePolygon(x + 0.5, y + 0.5, boundary))) continue;
     if (!enemyCells.has(k)) capturable.push({ k, distance: distanceToOutline(x, y) });
     else {
-      const rival = state.players.find((p) => p !== player && p.territory.has(k));
+      const rival = state.players.find((p) => p.id !== player.id && p.territory.has(k));
       if (rival && (Math.abs(x - rival.base.x) > 2 || Math.abs(y - rival.base.y) > 2)) breached.push({ k, rival, distance: distanceToOutline(x, y) });
     }
   }
@@ -335,10 +373,11 @@ function captureLoop(state, player, closingCell) {
   const breachCells = breached.slice(0, state.rules?.maxBreachCells ?? GAME.maxBreachCells);
   for (const { k, rival } of breachCells) { rival.territory.delete(k); player.territory.add(k); }
   const claimed = capturedCells.length + breachCells.length;
-  player.trail = []; player.trailSet.clear(); player.trailStart = null;
+  clearTrail(player);
   player.route = [];
   if (claimed) { player.stats.claims++; player.stats.cellsClaimed += claimed; }
-  state.effects.push({ type: "claim", playerId: player.id, cells: claimed, breached: breachCells.length });
+  if (claimed && player.isEcho) player.stats.echoCells += claimed;
+  state.effects.push({ type: "claim", playerId: player.id, cells: claimed, breached: breachCells.length, echo: Boolean(player.isEcho) });
   if (claimed) {
     const item = { kind: "capture", playerId: player.id, name: player.name, color: player.color, trail: [...boundary.map(({ x, y }) => key(Math.floor(x), Math.floor(y)))], cells: [...capturedCells, ...breachCells.map(({ k }) => k)], score: claimed };
     const previous = state.highlights.find((entry) => entry.kind === "capture");
@@ -347,7 +386,7 @@ function captureLoop(state, player, closingCell) {
   }
 }
 
-function traceTrail(state, player) {
+function traceTrail(state, player, now) {
   const { x, y } = cellAt(state, player.x, player.y);
   if (!inBounds(state, x, y)) return;
   const k = key(x, y);
@@ -363,7 +402,7 @@ function traceTrail(state, player) {
       .find((candidate) => player.territory.has(candidate));
     player.trailStart = neighbor || player.base && key(player.base.x, player.base.y);
   }
-  player.trail.push(k); player.trailSet.add(k);
+  player.trail.push(k); player.trailSet.add(k); player.trailTimes.set(k, now);
 }
 
 function loseTerritory(state, player) {
@@ -382,21 +421,23 @@ function loseTerritory(state, player) {
   for (const item of candidates.slice(0, target)) player.territory.delete(item.k);
 }
 
-function penalize(state, owner, now, hitCell) {
-  if (owner.shield) { owner.shield = false; state.effects.push({ type: "shield-block", playerId: owner.id }); return; }
+// Returns false when a Shield absorbed the hit.
+function penalize(state, owner, now, hitCell, byEcho = false) {
+  if (owner.shield) { owner.shield = false; state.effects.push({ type: "shield-block", playerId: owner.id }); return false; }
   const cutTrail = [...owner.trail];
   loseTerritory(state, owner);
   owner.stats.trailCuts++;
-  owner.trail = []; owner.trailSet.clear(); owner.trailStart = null;
+  clearTrail(owner);
   owner.route = [];
   const spawn = center(state, owner.base.x, owner.base.y);
   owner.x = spawn.x; owner.y = spawn.y;
-  const effect = { type: "penalty", playerId: owner.id, at: now, trail: cutTrail, color: owner.color, hitCell };
+  const effect = { type: "penalty", playerId: owner.id, at: now, trail: cutTrail, color: owner.color, hitCell, byEcho };
   state.effects.push(effect);
   if (cutTrail.length) {
     const previous = state.highlights.find((entry) => entry.kind === "cut");
     if (!previous || cutTrail.length > previous.score) state.highlights = [...state.highlights.filter((entry) => entry.kind !== "cut"), { kind: "cut", playerId: owner.id, name: owner.name, color: owner.color, trail: cutTrail, hitCell, score: cutTrail.length }];
   }
+  return true;
 }
 
 function spawnPowerUp(state, now) {
@@ -445,6 +486,18 @@ function collectPowerUps(state, player, now) {
     if (opponent) opponent.freezeUntil = Math.max(opponent.freezeUntil, now + 3_000);
   }
   if (power.type === "bonus") grantBonus(state, player);
+  const generation = Math.floor((now - state.startedAt) / GAME.echoDelayMs);
+  if (power.type === "rewind") {
+    const delay = Math.min(GAME.rewindDelayMs, Math.max(0, now - state.startedAt));
+    spawnEcho(state, player, generation, sampleAt(player.history, now - delay) || player, delay);
+  }
+  if (power.type === "lock") {
+    const opponent = state.players.find((p) => p.id !== player.id);
+    if (opponent) {
+      opponent.echoLockedUntil = generation + 1;
+      if (opponent.echo?.alive) breakEcho(state, opponent, null, player, true);
+    }
+  }
   player.stats.powerUpsCollected++;
   state.effects.push({ type: "power-collect", powerType: power.type, playerId: player.id });
 }
@@ -456,6 +509,68 @@ function tickPowerUps(state, now) {
   if (now >= state.nextPowerUpAt) {
     spawnPowerUp(state, now);
     state.nextPowerUpAt = now + 8_000 + Math.floor(state.random() * 4_001);
+  }
+}
+
+// Latest recorded position at or before `time`; history is ordered by time.
+function sampleAt(history, time) {
+  let lo = 0, hi = history.length - 1, found = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (history[mid].at <= time) { found = history[mid]; lo = mid + 1; } else hi = mid - 1;
+  }
+  return found;
+}
+
+// An echo shares its owner's territory and stats, so everything it claims counts for the owner.
+// A regular wave is skipped while an Echo Lock covers it; a Rewind always goes through.
+function spawnEcho(state, player, generation, sample, delay) {
+  const rewind = delay !== GAME.echoDelayMs, locked = !rewind && generation <= player.echoLockedUntil;
+  player.echo = {
+    id: player.id, name: player.name, color: player.color, isEcho: true, generation, delay, alive: !locked,
+    territory: player.territory, base: player.base, stats: player.stats,
+    x: sample.x, y: sample.y, trail: [], trailSet: new Set(), trailTimes: new Map(), trailStart: null, touchingTrail: false,
+  };
+  state.effects.push(locked ? { type: "echo-blocked", playerId: player.id } : { type: "echo-spawn", playerId: player.id, generation, rewind });
+}
+
+function moveEcho(state, player, at) {
+  const generation = Math.floor((at - state.startedAt) / GAME.echoDelayMs), history = player.history;
+  while (history.length > 1 && history[1].at <= at - GAME.echoDelayMs) history.shift();
+  if (generation >= 1 && (player.echo?.generation ?? 0) < generation) {
+    const sample = sampleAt(history, at - GAME.echoDelayMs);
+    if (sample) spawnEcho(state, player, generation, sample, GAME.echoDelayMs);
+    return;
+  }
+  const echo = player.echo;
+  if (!echo?.alive) return;
+  const sample = sampleAt(history, at - echo.delay);
+  if (!sample) return;
+  // A jump means the owner respawned at that moment; drop the trail rather than closing a loop across the map.
+  if (Math.hypot(sample.x - echo.x, sample.y - echo.y) > state.cellSize * 1.5) clearTrail(echo);
+  echo.x = sample.x; echo.y = sample.y;
+}
+
+function breakEcho(state, owner, hitCell, breaker, byLock = false) {
+  const echo = owner.echo;
+  state.effects.push({ type: "echo-broken", playerId: owner.id, trail: [...echo.trail], hitCell, color: owner.color, byLock });
+  if (breaker) breaker.stats.echoesBroken++;
+  echo.alive = false;
+  clearTrail(echo);
+}
+
+// An echo cuts the rival's trail like its owner would; the rival breaks the echo by touching the echo's trail.
+function resolveEchoContacts(state, now) {
+  for (const owner of state.players) {
+    if (!owner.echo?.alive) continue;
+    const echo = owner.echo, rival = state.players.find((p) => p.id !== owner.id);
+    if (!rival) continue;
+    const at = cellAt(state, echo.x, echo.y), echoCell = key(at.x, at.y);
+    const touching = rival.trailSet.has(echoCell) && !isHardened(rival, echoCell, now);
+    if (touching && !echo.touchingTrail && penalize(state, rival, now, echoCell, true)) owner.stats.echoCuts++;
+    echo.touchingTrail = touching;
+    const rivalAt = cellAt(state, rival.x, rival.y), rivalCell = key(rivalAt.x, rivalAt.y);
+    if (rival.connected && echo.trailSet.has(rivalCell) && !isHardened(echo, rivalCell, now)) breakEcho(state, owner, rivalCell, rival);
   }
 }
 
@@ -474,18 +589,24 @@ export function tickGame(state, now = Date.now()) {
   // Split fast ticks so nobody moves more than ~3/4 of a cell per step and trails never skip a cell.
   const fastest = Math.max(...state.players.map((player) => playerSpeed(player, now)));
   const subSteps = Math.max(1, Math.ceil(fastest * dt / (state.cellSize * 0.75)));
+  const hardCells = new Map(state.players.map((player) => [player.id, solidCellsFor(state, player, now)]));
   for (let step = 0; step < subSteps; step++) {
-    for (const player of state.players) if (player.connected) movePlayer(state, player, dt / subSteps, now);
+    // Each sub-step is recorded with its own timestamp so echoes replay the same cell-by-cell path.
+    const at = now - dt * 1000 * (subSteps - 1 - step) / subSteps;
+    for (const player of state.players) if (player.connected) movePlayer(state, player, dt / subSteps, now, hardCells.get(player.id));
+    for (const player of state.players) { player.history.push({ at, x: player.x, y: player.y }); moveEcho(state, player, at); }
     for (const player of state.players) if (player.connected) collectPowerUps(state, player, now);
-    for (const player of state.players) if (player.connected && player.freezeUntil <= now) traceTrail(state, player);
+    for (const player of state.players) if (player.connected && player.freezeUntil <= now) traceTrail(state, player, now);
+    for (const player of state.players) if (player.echo?.alive) traceTrail(state, player.echo, now);
     // Detect every cut before applying any, so simultaneous cuts hit both players instead of favoring player one.
     const cuts = state.players.map((toucher, i) => {
       const victim = state.players[1 - i], position = cellAt(state, toucher.x, toucher.y), cell = key(position.x, position.y);
-      const touching = victim.trailSet.has(cell), fresh = touching && !toucher.touchingTrail;
+      const touching = victim.trailSet.has(cell) && !isHardened(victim, cell, now), fresh = touching && !toucher.touchingTrail;
       toucher.touchingTrail = touching;
       return fresh ? { victim, cell } : null;
     });
     for (const cut of cuts) if (cut) penalize(state, cut.victim, now, cut.cell);
+    resolveEchoContacts(state, now);
   }
   if (now >= state.endsAt) {
     const [a, b] = state.players.map(matchScore);

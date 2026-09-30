@@ -2,7 +2,7 @@
 
 **Claim the map. Hold your ground.**
 
-Territory Rush is a fast, browser-based territory-control game. Leave your colored base to draw a trail, close a loop, and claim the tiles inside. Every trip beyond your territory creates an opening your rival can attack.
+Territory Rush is a fast 1v1 maze duel where your past self fights beside you. Every 30 seconds your **echo** returns to replay your moves from 30 seconds ago, claiming land and cutting your rival's trail. Every trail you leave **hardens into a wall** that your rival can't cross or cut, until it cracks.
 
 **Play now:** [territory-rush.onrender.com](https://territory-rush.onrender.com/)
 
@@ -11,7 +11,8 @@ Territory Rush is a fast, browser-based territory-control game. Leave your color
 - Move with **WASD** or the **arrow keys**.
 - Leave your colored territory to draw a trail.
 - Return to your territory to close the loop and claim the enclosed area.
-- Your exposed trail can be cut by your rival. A cut costs you **12% of your territory** (8% on Easy, 18% on Hard) and sends you back to base. A Shield blocks one hit.
+- Your fresh trail can be cut by your rival. A cut costs you **12% of your territory** (8% on Easy, 18% on Hard) and sends you back to base. A Shield blocks one hit.
+- **Trails harden:** 4 seconds after you draw a trail tile, it becomes a solid block for 6 seconds. Your rival can't walk through it or cut it, so you can use it to wall off corridors. It flickers, then cracks and can be cut again.
 - Collect items by moving over them. Their effects are shown in the in-game field guide.
 - Matches last **3 minutes**. The player with the higher final score wins.
 
@@ -23,6 +24,18 @@ Territory Rush is a fast, browser-based territory-control game. Leave your color
 | Shield | Blocks one trail-cut penalty. |
 | Trail-Freeze | Stops your rival from drawing a trail for 3 seconds. |
 | Territory Bonus | Claims up to 9 nearby unclaimed tiles. |
+| Rewind | Your echo returns immediately (even if it was broken) and follows 10 seconds behind you until the next echo wave. |
+| Echo Lock | Breaks your rival's echo and blocks their next echo wave. |
+
+### Echo Ghosts
+
+From **0:30**, each player gets an echo: a see-through copy that replays exactly what that player did 30 seconds earlier. A new wave of echoes starts every 30 seconds.
+
+- Your echo draws trails and claims land for you, and its trails harden too.
+- If your echo runs into your rival's fresh trail, your rival is cut, just as if you had done it.
+- Touch your rival's echo trail to break their echo until the next wave. Losing an echo costs nothing.
+
+So every move counts twice: once now, and again when your echo repeats it. The results screen and the shared result image show what your echo did: cells it claimed, rival cuts it made, and how many rival echoes you broke.
 
 ### The Crown
 

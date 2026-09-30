@@ -216,3 +216,11 @@ body:has(.room-panel:not(.hidden)){overflow:hidden}
 
 /* Share result */
 .result-actions .share-button{gap:8px}
+
+/* Echo ghosts and hardened trails */
+.echo-status{color:#c9a8ff;margin-top:2px}
+.echo-guide{border-color:#b58aff38;background:#b58aff0b}.echo-guide b{color:#c9a8ff}
+.harden-guide{margin-top:9px;border-color:#70d8ff38;background:#70d8ff0b}.harden-guide b{color:#84e6ff}
+.rewind-guide .power-symbol{color:#c9a8ff;background:#c9a8ff20}.lock-guide .power-symbol{color:#ff9f5c;background:#ff9f5c20}
+@media(min-width:801px){.power-legend{grid-template-columns:repeat(3,1fr)}}
+.result-echo{font-style:normal;color:#c9a8ff}

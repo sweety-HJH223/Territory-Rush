@@ -245,6 +245,7 @@ function advanceDailyReplay() {
   state.remainingMs = 180_000 - elapsed;
   $("#timer").textContent = formatTime(state.remainingMs);
   $("#crownStatus").textContent = state.crown ? "CROWN REPLAY" : "CROWN ACTIVATES AT 1:30";
+  $("#echoStatus").textContent = "";
   if (elapsed >= 180_000 && !dailyReplay.complete) { dailyReplay.complete = true; showToast("TOP RUN COMPLETE · exit replay to return", "claim"); }
 }
 
@@ -331,6 +332,9 @@ function updateTargets() {
   noteSnapshotArrival();
   state.players.forEach((player, index) => {
     setTarget(player.id, player.x, player.y);
+    const echoId = `echo:${player.id}`;
+    if (player.echo) setTarget(echoId, player.echo.x, player.echo.y);
+    else { targets.delete(echoId); renderPositions.delete(echoId); facing.delete(echoId); }
     const card = $(`#score${index}`);
     if (card) {
       card.style.setProperty("--player-color", player.color);
@@ -353,12 +357,42 @@ function updateTargets() {
     const held = controller ? (controller.id === localPlayerId ? "HELD BY YOU" : `HELD BY ${controller.name.toUpperCase()}`) : "UNCLAIMED";
     crownStatus.textContent = `${held} · ${crown.moveAt ? `${Math.ceil(Math.max(0, crown.moveAt - Date.now()) / 1000)}s TO MOVE` : "FINAL BEACON"}`;
   }
+  const echoEvery = state.echoEveryMs || 30_000, elapsed = (state.endsAt - state.startedAt) - (state.remainingMs ?? 0);
+  const nextEcho = Math.ceil((echoEvery - (elapsed % echoEvery)) / 1000);
+  $("#echoStatus").textContent = state.finished ? "" : elapsed < echoEvery ? `FIRST ECHOES IN ${nextEcho}s` : `NEW ECHOES IN ${nextEcho}s`;
   const active = state.players.filter((p) => p.shield || p.speedActive || p.freezeActive);
   $("#powerStatus").textContent = active.length ? active.map((p) => `${p.id === localPlayerId ? "YOU" : "RIVAL"}: ${[p.shield && "SHIELD", p.speedActive && "SPEED", p.freezeActive && "FROZEN"].filter(Boolean).join(" + ")}`).join("  •  ") : "NO ACTIVE POWER-UPS";
   for (const effect of state.effects || []) {
     const signature = `${effect.type}:${effect.playerId}:${effect.cells || ""}:${state.startedAt}:${state.remainingMs}`;
     if (previousEffects.has(signature)) continue;
     previousEffects.add(signature);
+    if (effect.type === "claim" && effect.echo) {
+      // Echoes claim often, so they get a quiet popup instead of a toast and sound.
+      const claimer = state.players.find((player) => player.id === effect.playerId), pos = renderPositions.get(`echo:${effect.playerId}`);
+      if (claimer && pos && effect.cells) addPopup(pos.x, pos.y - 22, `ECHO +${effect.cells}${effect.breached ? " BREACH" : ""}`, claimer.color, 12);
+      continue;
+    }
+    if (effect.type === "echo-spawn") {
+      const mine = effect.playerId === localPlayerId;
+      if (effect.rewind) { showToast(mine ? "REWIND · your echo is back, 10 seconds behind you" : "Rival used Rewind · their echo is back", "power"); playSound("power"); }
+      else if (mine) { showToast("YOUR ECHO IS HERE · it replays your last 30 seconds", "power"); playSound("power"); }
+      const owner = state.players.find((player) => player.id === effect.playerId);
+      if (owner?.echo) spawnBurst(owner.echo.x, owner.echo.y, owner.color, 12);
+    }
+    if (effect.type === "echo-blocked") {
+      showToast(effect.playerId === localPlayerId ? "ECHO LOCK · your echo wave was blocked" : "Rival's echo wave blocked by your Echo Lock", "power"); playSound("power");
+    }
+    if (effect.type === "echo-broken") {
+      const mine = effect.playerId === localPlayerId;
+      const text = effect.byLock ? (mine ? "Rival's Echo Lock broke your echo" : "Echo Lock · rival's echo broken, next wave blocked") : (mine ? "Your echo was broken" : "You broke the rival's echo");
+      showToast(text, mine ? "penalty" : "claim");
+      playSound(mine ? "penalty" : "claim");
+      if (effect.hitCell) {
+        const [hx, hy] = parseCell(effect.hitCell), size = state.map.cellSize;
+        spawnBurst((hx + .5) * size, (hy + .5) * size, effect.color || "#fff", 20);
+        addPopup((hx + .5) * size, (hy + .5) * size - 12, "ECHO BROKEN", effect.color || "#fff", 15);
+      }
+    }
     if (effect.type === "claim") { const breach = effect.breached ? ` · BREACH +${effect.breached}` : ""; showToast(effect.playerId === localPlayerId ? `Territory claimed · +${effect.cells} cells${breach}` : `Opponent claimed territory${breach}`, "claim"); playSound("claim");
       const claimer = state.players.find((player) => player.id === effect.playerId);
       if (claimer) setMood(claimer.id, "happy", 1100);
@@ -378,7 +412,9 @@ function updateTargets() {
       if (state.crown?.cell) { const size = state.map.cellSize; addPopup((state.crown.cell.x + .5) * size, (state.crown.cell.y + .5) * size - 16, "+4 ♛", "#ffd45c", 18); addShake(2, 180); }
     }
     if (effect.type === "penalty") {
-      showToast(effect.playerId === localPlayerId ? "Trail cut! Territory lost — back to base" : "Opponent caught · territory lost", "penalty"); playSound("penalty");
+      const mine = effect.playerId === localPlayerId;
+      const cutText = effect.byEcho ? (mine ? "Cut by your rival's echo! Back to base" : "Your echo cut the rival!") : (mine ? "Trail cut! Territory lost — back to base" : "Opponent caught · territory lost");
+      showToast(cutText, "penalty"); playSound("penalty");
       if (visualEffectsEnabled) { const frame = $(".board-frame"); frame.classList.remove("impact"); void frame.offsetWidth; frame.classList.add("impact"); setTimeout(() => frame.classList.remove("impact"), 300); }
       const caught = state.players.find((player) => player.id === effect.playerId);
       if (caught) spawnBurst(caught.x, caught.y, "#ff6e91", 18);
@@ -398,7 +434,7 @@ function updateTargets() {
     if (effect.type === "power-collect") {
       showToast(`${effect.playerId === localPlayerId ? "You collected" : "Opponent collected"} ${powerName(effect.powerType)}`, "power"); playSound("power");
       const collector = state.players.find((player) => player.id === effect.playerId);
-      const colors = { speed: "#ffd45c", shield: "#70d8ff", freeze: "#9ba8ff", bonus: "#ff83ce" };
+      const colors = POWER_COLORS;
       if (collector) setMood(collector.id, "happy", 700);
       if (collector) { spawnBurst(collector.x, collector.y, colors[effect.powerType] || "#fff", 15); addPopup(collector.x, collector.y - 16, powerName(effect.powerType).toUpperCase(), colors[effect.powerType] || "#fff", 13); }
     }
@@ -460,7 +496,8 @@ function spawnBurst(x, y, color, count) {
   }
   particles = particles.slice(-160);
 }
-function powerName(type) { return ({ speed: "Speed Boost", shield: "Shield", freeze: "Trail-Freeze", bonus: "Territory Bonus" })[type] || "Power-up"; }
+function powerName(type) { return ({ speed: "Speed Boost", shield: "Shield", freeze: "Trail-Freeze", bonus: "Territory Bonus", rewind: "Rewind", lock: "Echo Lock" })[type] || "Power-up"; }
+const POWER_COLORS = { speed: "#ffd45c", shield: "#70d8ff", freeze: "#9ba8ff", bonus: "#ff83ce", rewind: "#c9a8ff", lock: "#ff9f5c" };
 function formatTime(ms) { const sec = Math.max(0, Math.ceil(ms / 1000)); return `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`; }
 function showToast(text, kind = "") { toastEl.textContent = text; toastEl.className = `toast visible ${kind}`; clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.className = "toast", 2300); }
 
@@ -516,7 +553,7 @@ function displayResult(message) {
   $("#resultText").textContent = message.message || `Final score ${scores} · land cells + 4 per Crown point`;
   $("#resultStats").innerHTML = (state?.players || []).map((p) => {
     const stats = p.stats || {};
-    return `<div class="result-stat has-avatar" style="--stat-color:${p.color}"><canvas class="result-avatar" width="96" height="96" data-id="${escapeHtml(String(p.id))}" aria-hidden="true"></canvas><span><bdi>${escapeHtml(p.name)}</bdi>${p.id === localPlayerId ? " · YOU" : ""}</span><strong>${p.matchScore ?? p.territoryCells ?? 0} PTS</strong><small>${p.territoryPercent.toFixed(1)}% territory · ${stats.crownPoints || 0} Crown points · ${stats.cellsClaimed || 0} cells captured · ${stats.trailCuts || 0} cuts · ${stats.powerUpsCollected || 0} pickups</small></div>`;
+    return `<div class="result-stat has-avatar" style="--stat-color:${p.color}"><canvas class="result-avatar" width="96" height="96" data-id="${escapeHtml(String(p.id))}" aria-hidden="true"></canvas><span><bdi>${escapeHtml(p.name)}</bdi>${p.id === localPlayerId ? " · YOU" : ""}</span><strong>${p.matchScore ?? p.territoryCells ?? 0} PTS</strong><small>${p.territoryPercent.toFixed(1)}% territory · ${stats.crownPoints || 0} Crown points · ${stats.cellsClaimed || 0} cells captured · ${stats.trailCuts || 0} cuts · ${stats.powerUpsCollected || 0} pickups<br><em class="result-echo">Echo: ${stats.echoCells || 0} cells claimed · ${stats.echoCuts || 0} rival cuts · broke ${stats.echoesBroken || 0} rival echo${stats.echoesBroken === 1 ? "" : "es"}</em></small></div>`;
   }).join("");
   const unavailable = message.status === "disconnected" || state?.status === "disconnected";
   $("#rematchButton").classList.toggle("hidden", unavailable);
@@ -578,7 +615,9 @@ async function buildShareImage() {
   });
   const s = me.stats || {};
   g.font = sans(17, 500); g.fillStyle = "#c6d0dc";
-  g.fillText(`${s.cellsClaimed || 0} cells captured  ·  cut ${s.trailCuts || 0}×  ·  ${s.powerUpsCollected || 0} pickups`, 64, 526);
+  g.fillText(`${s.cellsClaimed || 0} cells captured  ·  cut ${s.trailCuts || 0}×  ·  ${s.powerUpsCollected || 0} pickups`, 64, 520);
+  g.font = sans(15, 500); g.fillStyle = "#c9a8ff";
+  g.fillText(`My echo: ${s.echoCells || 0} cells  ·  ${s.echoCuts || 0} rival cuts  ·  broke ${s.echoesBroken || 0} echo${s.echoesBroken === 1 ? "" : "es"}`, 64, 546);
   g.font = mono(14, 500); g.fillStyle = "#6d7a8c";
   g.fillText(`${new Date().toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}  ·  Play at ${location.host}`, 64, 578);
 
@@ -1124,8 +1163,8 @@ function draw(time = 0) {
     ctx.strokeStyle = colorAlpha(player.color, look.edgeAlpha); ctx.lineWidth = look.edgeContrast ? 2 : 1.5; ctx.shadowColor = colorAlpha(player.color, .55); ctx.shadowBlur = 5; ctx.stroke(); ctx.shadowBlur = 0;
   }
   ctx.drawImage(arena.walls, 0, 0);
-  const powerColors = { speed: "#ffd45c", shield: "#70d8ff", freeze: "#9ba8ff", bonus: "#ff83ce" };
-  const glyphs = { speed: "↯", shield: "◇", freeze: "❄", bonus: "+" };
+  const powerColors = POWER_COLORS;
+  const glyphs = { speed: "↯", shield: "◇", freeze: "❄", bonus: "+", rewind: "↺", lock: "⊘" };
   for (const power of state.powerUps || []) {
     const px = (power.x + .5) * cellSize, py = (power.y + .5) * cellSize + (visualEffectsEnabled ? Math.sin(motionTime / 190 + power.x) * 2.2 : 0);
     const color = powerColors[power.type] || "#fff";
@@ -1135,17 +1174,9 @@ function draw(time = 0) {
     ctx.fillStyle = "#14202b"; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(glyphs[power.type] || "•", px, py + .5);
     ctx.restore();
   }
+  for (const player of players) if (player.echo) drawEcho(player, motionTime);
   for (const player of players) {
-    if (player.trail?.length) {
-      const pulse = visualEffectsEnabled ? .72 + Math.sin(motionTime / 100) * .12 : .78;
-      ctx.save(); ctx.shadowColor = player.color; ctx.shadowBlur = 12;
-      for (const packed of player.trail) {
-        const [x, y] = parseCell(packed), px = x * cellSize, py = y * cellSize;
-        roundedRect(px + 4, py + 4, cellSize - 8, cellSize - 8, 4); ctx.fillStyle = colorAlpha(player.color, pulse); ctx.fill();
-        roundedRect(px + 6, py + 6, cellSize - 12, 2, 1); ctx.fillStyle = "#ffffff88"; ctx.fill();
-      }
-      ctx.restore();
-    }
+    drawTrail(player.trail, player.hardTrail, player.color, motionTime);
     const pos = interpolate(player.id, player.x, player.y);
     if (visualEffectsEnabled) drawMotionTrail(player, pos);
     drawAvatar(player, pos.x, pos.y, motionTime, players);
@@ -1205,6 +1236,44 @@ function draw(time = 0) {
   const vignette = ctx.createRadialGradient(canvas.width / 2, canvas.height / 2, 170, canvas.width / 2, canvas.height / 2, 680);
   vignette.addColorStop(0, "#050b1400"); vignette.addColorStop(1, "#050b1433");
   ctx.fillStyle = vignette; ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+function drawTrail(cells = [], hardTrail = [], color, time, ghost = false) {
+  if (!cells.length) return;
+  const size = state.map.cellSize, hard = new Map(hardTrail), flicker = visualEffectsEnabled && Math.floor(time / 90) % 2 === 1;
+  const pulse = visualEffectsEnabled ? .72 + Math.sin(time / 100) * .12 : .78;
+  ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = ghost ? 6 : 12;
+  if (ghost) ctx.globalAlpha = .5;
+  for (const packed of cells) {
+    const [x, y] = parseCell(packed), px = x * size, py = y * size, msLeft = hard.get(packed);
+    // Hardened tiles are solid blocks; in their final moment they flicker to warn that they are about to crack.
+    if (msLeft !== undefined && !(msLeft < 1200 && flicker)) {
+      roundedRect(px + 1.5, py + 1.5, size - 3, size - 3, 3); ctx.fillStyle = mixColor(color, -.3); ctx.fill();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = mixColor(color, .4); ctx.stroke();
+      ctx.fillStyle = "#0b111a66"; ctx.fillRect(px + 4, py + size / 2 - .75, size - 8, 1.5); ctx.fillRect(px + size / 2 - .75, py + 4, 1.5, size / 2 - 4.75);
+      continue;
+    }
+    roundedRect(px + 4, py + 4, size - 8, size - 8, 4); ctx.fillStyle = colorAlpha(color, pulse); ctx.fill();
+    roundedRect(px + 6, py + 6, size - 12, 2, 1); ctx.fillStyle = "#ffffff88"; ctx.fill();
+  }
+  ctx.restore();
+}
+// Echoes are painted to a sprite first because paintCharacter resets globalAlpha while drawing some characters.
+const echoSprite = document.createElement("canvas"); echoSprite.width = echoSprite.height = 80;
+function drawEcho(player, time) {
+  const echo = player.echo, id = `echo:${player.id}`;
+  drawTrail(echo.trail, echo.hardTrail, player.color, time, true);
+  const pos = interpolate(id, echo.x, echo.y), face = facingOf({ id, x: echo.x, y: echo.y });
+  const sprite = echoSprite.getContext("2d");
+  sprite.clearRect(0, 0, echoSprite.width, echoSprite.height);
+  paintCharacter(sprite, { character: player.character, color: player.color, x: 40, y: 40, scale: .95, time, dir: face, moving: face.moving && time > 0, mood: "determined", seed: (player.id.charCodeAt(0) || 0) + 7 });
+  ctx.save();
+  ctx.globalAlpha = .45 + (visualEffectsEnabled ? Math.sin(time / 260) * .07 : 0);
+  ctx.drawImage(echoSprite, pos.x - 40, pos.y - 40);
+  ctx.globalAlpha = .8; ctx.strokeStyle = player.color; ctx.lineWidth = 1.2; ctx.setLineDash([3, 4]);
+  ctx.beginPath(); ctx.arc(pos.x, pos.y, 16, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+  ctx.font = `800 8px Inter, "Segoe UI", sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillStyle = player.color;
+  ctx.fillText("ECHO", pos.x, pos.y - 23);
+  ctx.restore();
 }
 // Glide at a constant pace from where the player is drawn to the newest server position, spread over one
 // snapshot interval, so motion stays even instead of surging and pausing between 20 Hz updates.

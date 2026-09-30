@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "no
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { ARENA_THEMES, DIFFICULTIES, GAME, createGame, setPlayerInput, tickGame, territoryPercent } from "./game/core.js";
+import { ARENA_THEMES, DIFFICULTIES, GAME, createGame, hardenedTrail, setPlayerInput, tickGame, territoryPercent } from "./game/core.js";
 import { updateBotInput } from "./game/bot.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -139,22 +139,23 @@ function lobbyUpdate(room) {
 function sendSnapshot(room) {
   const game = room.game;
   if (!game) return;
+  const now = Date.now();
   const players = game.players.map((p) => ({
     id: p.id, name: p.name, character: p.character, color: p.color,
     x: p.x, y: p.y, base: p.base,
-    territory: [...p.territory], trail: p.trail,
+    territory: [...p.territory], trail: p.trail, hardTrail: hardenedTrail(p, now),
+    echo: p.echo?.alive ? { x: p.echo.x, y: p.echo.y, trail: p.echo.trail, hardTrail: hardenedTrail(p.echo, now) } : null,
     territoryPercent: territoryPercent(game, p), territoryCells: p.territory.size,
     matchScore: p.territory.size + (p.stats.crownPoints || 0) * 4, shield: p.shield, stats: p.stats,
-    speedActive: p.speedUntil > Date.now(), freezeActive: p.freezeUntil > Date.now(), bot: p.bot,
+    speedActive: p.speedUntil > now, freezeActive: p.freezeUntil > now, bot: p.bot,
   }));
-  const now = Date.now();
   broadcast(room, "state", {
     roomCode: room.code, status: room.status, mode: room.dailyChallenge ? "daily" : "standard", dailyDay: room.dailyDay || null,
     map: { width: game.width, height: game.height, cellSize: game.cellSize, walls: game.walls },
     players, powerUps: game.powerUps, theme: game.theme, crown: game.crown, startedAt: game.startedAt, endsAt: game.endsAt,
     countdownMs: Math.max(0, game.startedAt - now),
     remainingMs: Math.min(GAME.durationMs, Math.max(0, game.endsAt - Math.max(now, game.startedAt))),
-    finished: game.finished, winnerId: game.winnerId, draw: game.draw, serverNow: now, difficulty: game.rules.id,
+    finished: game.finished, winnerId: game.winnerId, draw: game.draw, serverNow: now, difficulty: game.rules.id, echoEveryMs: GAME.echoDelayMs,
     highlights: game.finished ? game.highlights : [],
     effects: game.effects.splice(0),
   });

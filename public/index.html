@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#10141e" />
-    <meta name="description" content="Draw risky loops, breach rival territory, and fight for the Crown in Territory Rush." />
+    <meta name="description" content="A 1v1 maze duel where your past self fights beside you. Harden your trail into walls, team up with your echo, and fight for the Crown in Territory Rush." />
     <title>Territory Rush</title>
     <link rel="icon" type="image/svg+xml" href="/assets/territory-mark.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -23,11 +23,11 @@
         <div class="hero-copy">
           <div class="eyebrow">CLAIM THE MAP. HOLD YOUR GROUND.</div>
           <h1>Every move<br />makes <em>your mark.</em></h1>
-          <p>Draw a loop to claim territory. Keep your trail safe, and watch your rival’s back.</p>
+          <p>A 1v1 maze duel where your past self fights beside you. Every 30 seconds your echo returns to replay your moves, and every trail you leave hardens into a wall.</p>
           <section class="lobby-howto" aria-label="How to play before starting">
             <span class="eyebrow">QUICK START</span>
-            <p><b>Move with WASD.</b> Leave your color, draw a loop, then return to your color to claim the tiles inside. Your trail is exposed until you get back.</p>
-            <small><b>Pickups:</b> Speed moves you faster · Shield blocks one trail cut · Freeze stops the rival drawing for 3 seconds · Bonus claims up to 9 nearby unclaimed tiles.</small>
+            <p><b>Move with WASD.</b> Leave your color, draw a loop, then return to your color to claim the tiles inside. After 4 seconds your trail hardens into a wall your rival can’t cross or cut. From 0:30 your <b>echo</b> replays your moves from 30 seconds ago, claiming land and cutting rivals for you.</p>
+            <small><b>Pickups:</b> Speed moves you faster · Shield blocks one trail cut · Freeze stops the rival drawing for 3 seconds · Bonus claims up to 9 nearby unclaimed tiles · Rewind brings your echo back 10 seconds behind you · Echo Lock breaks the rival's echo and blocks their next wave.</small>
             <small><b>Emotes:</b> During a match press <kbd>1</kbd> GG · <kbd>2</kbd> 😂 · <kbd>3</kbd> Catch me! · <kbd>4</kbd> Oops, or click the buttons under the arena. One emote per second.</small>
           </section>
           <div class="hero-art-wrap"><img class="hero-art" src="/assets/arena-poster.svg" alt="A glowing maze arena split between rival territories" /><span class="hero-art-caption"><i></i> ONE ARENA · TWO RIVALS · NO SAFE TRAILS</span></div>
@@ -69,15 +69,15 @@
         </div>
         <div class="feature-strip">
           <div><span class="feature-icon">⌁</span><span><b>3 MINUTES</b><small>One continuous match</small></span></div>
-          <div><span class="feature-icon">◉</span><span><b>DRAW TO CLAIM</b><small>Loop back to your color</small></span></div>
-          <div><span class="feature-icon">↗</span><span><b>WATCH YOUR TRAIL</b><small>Rivals can cut you off</small></span></div>
+          <div><span class="feature-icon">◌</span><span><b>ECHO GHOSTS</b><small>Your past self replays your moves</small></span></div>
+          <div><span class="feature-icon">▦</span><span><b>TRAILS HARDEN</b><small>Fresh trails turn into walls</small></span></div>
         </div>
       </section>
 
       <section id="game" class="game-view hidden">
         <div class="game-topline">
           <div><div class="eyebrow">TERRITORY RUSH</div><div class="arena-name"><b id="arenaTheme">NEON CIRCUIT</b> <span>•</span> <span id="matchMode">1V1 ARENA</span></div></div>
-          <div class="timer-box"><span class="label">TIME LEFT</span><strong id="timer">03:00</strong><small id="crownStatus" class="crown-status">CROWN ACTIVATES AT 1:30</small></div>
+          <div class="timer-box"><span class="label">TIME LEFT</span><strong id="timer">03:00</strong><small id="crownStatus" class="crown-status">CROWN ACTIVATES AT 1:30</small><small id="echoStatus" class="crown-status echo-status">FIRST ECHOES IN 30s</small></div>
           <button id="leaveButton" class="button quiet">Leave match</button>
         </div>
         <div class="scoreboard">
@@ -95,18 +95,22 @@
         </div>
         <section class="guide-panel" aria-label="Power-up and trail guide">
           <div class="guide-heading"><div><span class="eyebrow">FIELD GUIDE</span><h2>Claim territory. Outplay your rival.</h2></div><span class="guide-note">Walk over a pickup to collect it.</span></div>
-          <p class="how-to-play"><b>How to play:</b> Move with WASD. Leave your color to draw a trail, then return to your territory to close the loop and claim the enclosed tiles. Your trail is exposed until you return.</p>
+          <p class="how-to-play"><b>How to play:</b> Move with WASD. Leave your color to draw a trail, then return to your territory to close the loop and claim the enclosed tiles. Fresh trail can be cut; after 4 seconds it hardens into a wall for a while.</p>
           <div class="power-legend">
             <div class="power-guide speed-guide"><span class="power-symbol">↯</span><span><b>Speed Boost</b><small>Move faster for 5 seconds</small></span></div>
             <div class="power-guide shield-guide"><span class="power-symbol">◇</span><span><b>Shield</b><small>Blocks one trail-cut penalty</small></span></div>
             <div class="power-guide freeze-guide"><span class="power-symbol">❄</span><span><b>Trail-Freeze</b><small>Stops the rival from drawing a trail for 3 seconds</small></span></div>
             <div class="power-guide bonus-guide"><span class="power-symbol">+</span><span><b>Territory Bonus</b><small>Claims up to 9 nearby unclaimed tiles</small></span></div>
+            <div class="power-guide rewind-guide"><span class="power-symbol">↺</span><span><b>Rewind</b><small>Your echo returns now, 10 seconds behind you</small></span></div>
+            <div class="power-guide lock-guide"><span class="power-symbol">⊘</span><span><b>Echo Lock</b><small>Breaks the rival's echo and blocks their next wave</small></span></div>
           </div>
-          <div class="trail-warning"><span class="warning-mark">!</span><span><b>Trail danger:</b> outside your color, your trail is exposed. If your rival touches it, you lose part of your territory (8% on Easy, 12% on Normal, 18% on Hard) and respawn at base. A Shield blocks one hit.</span></div>
+          <div class="trail-warning"><span class="warning-mark">!</span><span><b>Trail danger:</b> a fresh trail is exposed. If your rival touches it, you lose part of your territory (8% on Easy, 12% on Normal, 18% on Hard) and respawn at base. A Shield blocks one hit.</span></div>
+          <div class="crown-guide echo-guide"><b>ECHO GHOSTS</b><span>From 0:30, every 30 seconds each player gets an echo that replays exactly what they did 30 seconds earlier. Your echo draws trails, claims land for you, and cuts your rival’s trail if it runs into it. Touch your rival’s echo trail to break their echo until the next wave. Breaking your echo costs you nothing.</span></div>
+          <div class="crown-guide harden-guide"><b>TRAILS HARDEN</b><span>4 seconds after you draw a trail tile, it hardens into a solid block. For 6 seconds your rival can’t walk through it or cut it, so use it to block corridors. Then it cracks and becomes exposed again, and it flickers just before it cracks. Echo trails harden too.</span></div>
           <div class="breach-guide"><b>BREACH CAPTURE</b><span>A loop can claim up to 9% of the arena at once. If it crosses rival land, it can steal outer cells (4 on Easy, 6 on Normal, 10 on Hard); bases stay protected.</span></div>
           <div class="crown-guide"><b>THE CROWN</b><span>Activates at 1:30 and moves at 0:45, always to a spot equally far from both bases. Stand on its tile for 5 seconds to score 1 Crown point. Each point adds 4 tiles to your final score.</span></div>
         </section>
-        <div class="game-footer"><div class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>MOVE</span></div><div>Close the loop to claim. Your trail is vulnerable until you return home.</div><div id="powerStatus" class="power-status">NO ACTIVE POWER-UPS</div><div id="emoteBar" class="emote-bar" aria-label="Emotes"><button type="button" data-emote="0"><kbd>1</kbd>GG</button><button type="button" data-emote="1"><kbd>2</kbd>😂</button><button type="button" data-emote="2"><kbd>3</kbd>Catch me!</button><button type="button" data-emote="3"><kbd>4</kbd>Oops</button></div></div>
+        <div class="game-footer"><div class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>MOVE</span></div><div>Close the loop to claim. Fresh trails can be cut; hardened trails block your rival.</div><div id="powerStatus" class="power-status">NO ACTIVE POWER-UPS</div><div id="emoteBar" class="emote-bar" aria-label="Emotes"><button type="button" data-emote="0"><kbd>1</kbd>GG</button><button type="button" data-emote="1"><kbd>2</kbd>😂</button><button type="button" data-emote="2"><kbd>3</kbd>Catch me!</button><button type="button" data-emote="3"><kbd>4</kbd>Oops</button></div></div>
       </section>
       <footer class="site-footer"><span>BUILT FOR BOLD MOVES</span><span>© TERRITORY RUSH</span></footer>
     </main>
