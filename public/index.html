@@ -18,6 +18,7 @@
         <a class="brand" href="/" aria-label="Territory Rush home"><img class="brand-mark" src="/assets/territory-mark.svg" alt="" /><span>TERRITORY <b>RUSH</b></span></a>
         <button id="settingsButton" class="button quiet settings-trigger">⚙ Settings</button>
       </header>
+      <button id="soundHint" class="sound-hint hidden" type="button">🔊 Click anywhere to start the music</button>
 
       <section id="lobby" class="lobby-view">
         <div class="hero-copy">
@@ -78,7 +79,7 @@
         <div class="game-topline">
           <div><div class="eyebrow">TERRITORY RUSH</div><div class="arena-name"><b id="arenaTheme">NEON CIRCUIT</b> <span>•</span> <span id="matchMode">1V1 ARENA</span></div></div>
           <div class="timer-box"><span class="label">TIME LEFT</span><strong id="timer">03:00</strong><small id="crownStatus" class="crown-status">CROWN ACTIVATES AT 1:30</small><small id="echoStatus" class="crown-status echo-status">FIRST ECHOES IN 30s</small></div>
-          <button id="leaveButton" class="button quiet">Leave match</button>
+          <div class="topline-actions"><button id="musicToggle" class="button quiet" aria-label="Toggle music">♪ Music on</button><button id="leaveButton" class="button quiet">Leave match</button></div>
         </div>
         <div class="scoreboard">
           <div class="score-card" id="score0"><span class="score-avatar"></span><span class="score-info"><small>YOU</small><b class="score-name" dir="auto">Player 1</b><small class="score-crown">♛ 0</small></span><strong class="score-value">0.0%</strong></div>
@@ -117,7 +118,7 @@
     <dialog id="settingsDialog" class="settings-dialog">
       <form method="dialog"><div class="settings-heading"><div><span class="eyebrow">GAME OPTIONS</span><h2>Settings</h2></div><button class="close-settings" aria-label="Close settings">×</button></div>
         <label class="setting-row" for="volumeSetting"><span><b>Sound volume</b><small>Arcade feedback for claims, pickups, and trail cuts</small></span><input id="volumeSetting" type="range" min="0" max="100" value="65" /></label>
-        <label class="setting-row" for="musicSetting"><span><b>Arcade music</b><small>Soft synth loop during matches</small></span><input id="musicSetting" type="checkbox" /></label>
+        <label class="setting-row" for="musicSetting"><span><b>Arcade music</b><small>Beat that builds as the match heats up</small></span><input id="musicSetting" type="checkbox" /></label>
         <label class="setting-row" for="effectsSetting"><span><b>Visual effects</b><small>Animations, glow, and impact feedback</small></span><input id="effectsSetting" type="checkbox" checked /></label>
         <button class="button secondary settings-done">Done</button>
       </form>

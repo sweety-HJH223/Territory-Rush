@@ -9,8 +9,9 @@ let socket, localPlayerId = null, roomCode = null, characterOptions = [], state 
 let held = new Set(), toastTimer, previousEffects = new Set(), matchStarted = false, opponentLeft = false;
 let visualEffectsEnabled = localStorage.getItem("tr-visual-effects") !== "false";
 let soundVolume = Number(localStorage.getItem("tr-sound-volume") ?? 65) / 100;
-let musicEnabled = localStorage.getItem("tr-music") === "true";
-let audioContext = null, masterGain = null, musicTimer = null, musicBeat = 0, previousTerritory = null, particles = [], claimFlashes = [];
+let musicEnabled = localStorage.getItem("tr-music") !== "false";
+let audioContext = null, masterGain = null, previousTerritory = null, particles = [], claimFlashes = [];
+let shockwaves = [], bigBanners = [], screenFlash = null, captureCombo = 0;
 let finalReplayTimer = null, finalReplayDone = false, activeReplay = null;
 let popups = [], motionTrails = new Map(), shake = { power: 0, until: 0, duration: 1 };
 let lastCountdown = 0, goUntil = 0, lastTickSecond = null, finalPhase = false, finishBannerShown = false, finishBannerActive = false, finishBannerTimer = null;
@@ -24,20 +25,34 @@ $("#effectsSetting").checked = visualEffectsEnabled;
 document.documentElement.classList.toggle("reduced-motion", !visualEffectsEnabled);
 
 function enableAudio() {
-  if (audioContext) { if (audioContext.state === "suspended") audioContext.resume(); if (matchStarted) startMusic(); return; }
+  if (audioContext) { if (audioContext.state === "suspended") audioContext.resume(); if (!finishBannerActive) startMusic(); return; }
   const Audio = window.AudioContext || window.webkitAudioContext;
   if (!Audio) return;
-  try { audioContext = new Audio(); masterGain = audioContext.createGain(); masterGain.gain.value = soundVolume; masterGain.connect(audioContext.destination); if (matchStarted) startMusic(); }
+  try {
+    audioContext = new Audio(); masterGain = audioContext.createGain(); masterGain.gain.value = soundVolume; masterGain.connect(audioContext.destination);
+    audioContext.onstatechange = updateSoundHint; startMusic();
+  }
   catch { audioContext = null; }
+  updateSoundHint();
 }
-document.addEventListener("pointerdown", enableAudio, { once: true });
-document.addEventListener("keydown", enableAudio, { once: true });
-function playSound(kind) {
+// Browsers keep audio suspended until the first click, tap or key press, so the music starts on whichever comes first.
+const AUDIO_UNLOCK_EVENTS = ["pointerdown", "keydown", "touchend", "click"];
+function unlockAudio() {
+  enableAudio();
+  if (audioContext?.state === "running") for (const type of AUDIO_UNLOCK_EVENTS) document.removeEventListener(type, unlockAudio, true);
+}
+function updateSoundHint() {
+  const hint = $("#soundHint"), waiting = musicEnabled && soundVolume > 0 && audioContext?.state !== "running";
+  if (hint) hint.classList.toggle("hidden", !waiting);
+  if (audioContext?.state === "running") for (const type of AUDIO_UNLOCK_EVENTS) document.removeEventListener(type, unlockAudio, true);
+}
+for (const type of AUDIO_UNLOCK_EVENTS) document.addEventListener(type, unlockAudio, true);
+function playSound(kind, pitch = 1) {
   if (!audioContext || !masterGain || soundVolume <= 0) return;
   const presets = { claim: [480, 790, .2, "sine", .16], power: [620, 980, .15, "triangle", .15], penalty: [190, 75, .32, "sawtooth", .16], move: [280, 220, .05, "sine", .035], tick: [1250, 1100, .05, "square", .05], count: [520, 520, .16, "square", .09], go: [700, 1400, .38, "sawtooth", .11], emote: [880, 1320, .09, "sine", .07] };
   const [from, to, duration, wave, level] = presets[kind] || presets.power;
   const osc = audioContext.createOscillator(), envelope = audioContext.createGain(), start = audioContext.currentTime;
-  osc.type = wave; osc.frequency.setValueAtTime(from, start); osc.frequency.exponentialRampToValueAtTime(to, start + duration);
+  osc.type = wave; osc.frequency.setValueAtTime(from * pitch, start); osc.frequency.exponentialRampToValueAtTime(to * pitch, start + duration);
   envelope.gain.setValueAtTime(.0001, start); envelope.gain.exponentialRampToValueAtTime(level, start + .018); envelope.gain.exponentialRampToValueAtTime(.0001, start + duration);
   osc.connect(envelope); envelope.connect(masterGain); osc.start(start); osc.stop(start + duration + .025);
 }
@@ -50,27 +65,204 @@ function playNotes(notes, step = .12, wave = "triangle", level = .12) {
     osc.connect(envelope); envelope.connect(masterGain); osc.start(start); osc.stop(start + length + .03);
   });
 }
-function startMusic() {
-  if (!musicEnabled || !matchStarted || !audioContext || musicTimer) return;
-  const notes = [196, 246.94, 293.66, 392, 329.63, 293.66, 220, 261.63];
-  musicTimer = setInterval(() => {
-    if (!audioContext || audioContext.state !== "running" || !matchStarted) return;
-    const at = audioContext.currentTime, osc = audioContext.createOscillator(), gain = audioContext.createGain();
-    osc.type = "triangle"; osc.frequency.value = notes[musicBeat++ % notes.length];
-    gain.gain.setValueAtTime(.0001, at); gain.gain.exponentialRampToValueAtTime(.025, at + .04); gain.gain.exponentialRampToValueAtTime(.0001, at + .42);
-    osc.connect(gain); gain.connect(masterGain); osc.start(at); osc.stop(at + .45);
-  }, finalPhase ? 240 : 480);
+// Shared synth voices for the music and the big-capture sound effects.
+let noiseBuffer = null;
+function noise() {
+  if (!noiseBuffer) {
+    noiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate, audioContext.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  }
+  return noiseBuffer;
 }
-function stopMusic() { if (musicTimer) clearInterval(musicTimer); musicTimer = null; }
+function voice(dest, at, { freq, toFreq, type = "sine", level, attack = .005, decay, lowpass, detune = 0 }) {
+  const osc = audioContext.createOscillator(), gain = audioContext.createGain();
+  osc.type = type; osc.detune.value = detune; osc.frequency.setValueAtTime(freq, at);
+  if (toFreq) osc.frequency.exponentialRampToValueAtTime(toFreq, at + decay * .5);
+  gain.gain.setValueAtTime(.0001, at); gain.gain.exponentialRampToValueAtTime(level, at + attack); gain.gain.exponentialRampToValueAtTime(.0001, at + attack + decay);
+  let node = osc;
+  if (lowpass) { const filter = audioContext.createBiquadFilter(); filter.type = "lowpass"; filter.frequency.value = lowpass; osc.connect(filter); node = filter; }
+  node.connect(gain); gain.connect(dest); osc.start(at); osc.stop(at + attack + decay + .03);
+}
+function noiseVoice(dest, at, { filter = "highpass", freq, toFreq, q = .8, level, attack = .002, decay }) {
+  const src = audioContext.createBufferSource(), shape = audioContext.createBiquadFilter(), gain = audioContext.createGain();
+  src.buffer = noise(); shape.type = filter; shape.Q.value = q; shape.frequency.setValueAtTime(freq, at);
+  if (toFreq) shape.frequency.exponentialRampToValueAtTime(toFreq, at + attack + decay);
+  gain.gain.setValueAtTime(.0001, at); gain.gain.exponentialRampToValueAtTime(level, at + attack); gain.gain.exponentialRampToValueAtTime(.0001, at + attack + decay);
+  src.connect(shape); shape.connect(gain); gain.connect(dest); src.start(at); src.stop(at + attack + decay + .03);
+}
+
+// Procedural upbeat 4-bar loop (C–G–Am–F) with a four-on-the-floor kick and a bass that pumps against it.
+// The menus get a light groove; in a match it adds a lead hook once echoes arrive, a pad once the Crown is live,
+// then busier hats, risers and a faster tempo at the end. Scoring briefly lifts it a level ("hype").
+const MUSIC_CHORDS = [
+  { root: 130.81, arp: [523.25, 659.25, 783.99, 1046.5], pad: [261.63, 329.63, 392], hook: [[0, 783.99, 2], [3, 659.25, 1], [4, 783.99, 2], [6, 880, 2], [8, 783.99, 2], [11, 659.25, 1], [12, 587.33, 2], [14, 659.25, 2]] },
+  { root: 98, arp: [493.88, 587.33, 783.99, 987.77], pad: [246.94, 293.66, 392], hook: [[0, 587.33, 2], [3, 493.88, 1], [4, 587.33, 2], [6, 783.99, 3], [10, 659.25, 1], [12, 587.33, 2], [14, 493.88, 2]] },
+  { root: 110, arp: [440, 523.25, 659.25, 880], pad: [220, 261.63, 329.63], hook: [[0, 659.25, 2], [3, 523.25, 1], [4, 659.25, 2], [6, 880, 2], [8, 783.99, 2], [11, 659.25, 1], [12, 523.25, 2], [14, 587.33, 2]] },
+  { root: 87.31, arp: [440, 523.25, 698.46, 880], pad: [220, 261.63, 349.23], hook: [[0, 698.46, 2], [3, 523.25, 1], [4, 698.46, 2], [6, 880, 2], [8, 1046.5, 3], [12, 880, 1], [13, 783.99, 1], [14, 659.25, 2]] },
+];
+const music = { timer: null, bus: null, synth: null, nextAt: 0, step: 0, menu: null, hypeUntil: 0 };
+function musicMood() {
+  const hype = audioContext.currentTime < music.hypeUntil;
+  if (!matchStarted || !state || state.finished) return { menu: true, level: 1, hype: false };
+  const total = state.endsAt && state.startedAt ? state.endsAt - state.startedAt : 180_000;
+  const remaining = state.remainingMs ?? total, elapsed = total - remaining;
+  const level = Math.min(3, (elapsed >= 90_000 ? 3 : elapsed >= 30_000 ? 2 : 1) + (hype ? 1 : 0));
+  return { countdown: (state.countdownMs || 0) > 0, level, hype, final: remaining <= 30_000, critical: remaining <= 10_000 };
+}
+// The menus and results screen get their own bouncy track in G (G–Em–C–D): a syncopated bass, marimba hook and offbeat chord stabs.
+const MENU_CHORDS = [
+  { root: 98, stab: [392, 493.88, 587.33], hook: [[0, 587.33], [2, 783.99], [4, 659.25], [7, 587.33], [8, 493.88], [10, 587.33], [12, 659.25], [14, 587.33]] },
+  { root: 82.41, stab: [329.63, 392, 493.88], hook: [[0, 493.88], [2, 659.25], [4, 587.33], [7, 493.88], [8, 392], [10, 493.88], [12, 587.33], [14, 659.25]] },
+  { root: 65.41, stab: [329.63, 392, 523.25], hook: [[0, 659.25], [2, 783.99], [4, 880], [7, 783.99], [8, 659.25], [10, 587.33], [12, 523.25], [14, 587.33]] },
+  { root: 73.42, stab: [369.99, 440, 587.33], hook: [[0, 739.99], [2, 880], [4, 739.99], [6, 587.33], [8, 440], [10, 587.33], [12, 739.99], [14, 880]] },
+];
+const MENU_BASS_STEPS = { 0: 1, 3: 2, 6: 1, 8: 1, 11: 2, 14: 1 };
+function playMenuStep(step, at, stepLength) {
+  const drums = music.bus, synth = music.synth, bar = Math.floor(step / 16), beat = step % 16, chord = MENU_CHORDS[bar];
+  if (beat === 0 || beat === 8 || beat === 10) voice(drums, at, { freq: 130, toFreq: 48, level: beat === 10 ? .5 : .8, decay: .2 });
+  if (beat === 4 || beat === 12) noiseVoice(drums, at, { filter: "bandpass", freq: 3200, q: 1.5, level: .32, decay: .06 });
+  noiseVoice(drums, at, { freq: 8000, level: beat % 2 ? .035 : .06, decay: .03 });
+  if (MENU_BASS_STEPS[beat]) voice(synth, at, { freq: chord.root * MENU_BASS_STEPS[beat], type: "triangle", level: .42, decay: stepLength * 1.6, lowpass: 700 });
+  if (beat % 4 === 2) for (const freq of chord.stab) voice(synth, at, { freq, type: "sawtooth", level: .025, decay: stepLength * .9, lowpass: 1900 });
+  for (const [hookStep, freq] of chord.hook) if (hookStep === beat) {
+    voice(synth, at, { freq, type: "triangle", level: .1, decay: .2 });
+    voice(synth, at, { freq: freq * 4, type: "sine", level: .02, decay: .04 });
+  }
+}
+function playMusicStep(step, at, stepLength, mood) {
+  if (mood.menu) return playMenuStep(step, at, stepLength);
+  const drums = music.bus, synth = music.synth, bar = Math.floor(step / 16), beat = step % 16, chord = MUSIC_CHORDS[bar];
+  if (beat % 4 === 0) {
+    voice(drums, at, { freq: 160, toFreq: 45, level: .95, decay: .24 });
+    // Duck the melodic parts on every kick so the groove pumps.
+    synth.gain.setValueAtTime(.3, at); synth.gain.linearRampToValueAtTime(1, at + stepLength * 3);
+  }
+  if (mood.countdown && beat === 0) noiseVoice(drums, at, { filter: "bandpass", freq: 300, toFreq: 5000, q: 2, level: .12, attack: stepLength * 15, decay: .05 });
+  if (beat === 4 || beat === 12) { noiseVoice(drums, at, { filter: "bandpass", freq: 1500, q: .6, level: .45, decay: .14 }); noiseVoice(drums, at + .012, { filter: "bandpass", freq: 2400, q: 1, level: .25, decay: .1 }); }
+  if (beat % 4 === 2) noiseVoice(drums, at, { freq: 7000, level: .17, decay: .09 });
+  else if (mood.final || mood.hype) noiseVoice(drums, at, { freq: 9000, level: .06, decay: .025 });
+  if (beat % 4 === 2) voice(synth, at, { freq: chord.root * 2, type: "sawtooth", level: .36, decay: stepLength * 1.8, lowpass: 900 });
+  if (beat % 4 === 0) voice(synth, at, { freq: chord.root, type: "sine", level: .28, decay: stepLength * 2 });
+  const arpEvery = mood.level >= 3 ? 1 : 2;
+  if (step % arpEvery === 0) voice(synth, at, { freq: chord.arp[(step / arpEvery) % 4], type: "square", level: .05, decay: .12, lowpass: 3200 });
+  if (mood.level >= 2) for (const [hookStep, freq, length] of chord.hook) if (hookStep === beat) {
+    const octave = mood.final ? 2 : 1;
+    voice(synth, at, { freq: freq * octave, type: "square", level: .06, decay: stepLength * length * .9, lowpass: 3600 });
+    voice(synth, at, { freq: freq * octave, type: "sawtooth", level: .035, decay: stepLength * length * .9, lowpass: 2600, detune: 9 });
+  }
+  if (mood.level >= 3 && beat === 0) for (const [i, freq] of chord.pad.entries()) voice(synth, at, { freq, type: "sawtooth", level: .035, attack: .25, decay: stepLength * 15, lowpass: 1600, detune: (i - 1) * 7 });
+  if (mood.final && bar === 3 && beat === 0) noiseVoice(drums, at, { filter: "bandpass", freq: 400, toFreq: 6000, q: 2, level: .14, attack: stepLength * 15, decay: .05 });
+}
+function scheduleMusic() {
+  if (!audioContext || audioContext.state !== "running") return;
+  const now = audioContext.currentTime;
+  // After a hidden tab or a stall, resume on the beat instead of firing every missed note at once.
+  if (music.nextAt < now - .05) music.nextAt = now + .02;
+  while (music.nextAt < now + .12) {
+    const mood = musicMood(), stepLength = 60 / (mood.critical ? 142 : mood.menu ? 112 : 128) / 4;
+    if (mood.menu !== music.menu) {
+      if (music.menu !== null) music.step = 0;
+      music.menu = mood.menu; music.bus.gain.setTargetAtTime(mood.menu ? .17 : .26, music.nextAt, .3);
+    }
+    playMusicStep(music.step, music.nextAt, stepLength, mood);
+    music.step = (music.step + 1) % 64;
+    music.nextAt += stepLength;
+  }
+}
+function startMusic() {
+  if (!musicEnabled || !audioContext || music.timer) return;
+  if (!music.bus) {
+    music.bus = audioContext.createGain(); music.bus.gain.value = .17; music.bus.connect(masterGain);
+    music.synth = audioContext.createGain(); music.synth.connect(music.bus);
+  }
+  music.step = 0; music.menu = null; music.nextAt = audioContext.currentTime + .08;
+  music.timer = setInterval(scheduleMusic, 25);
+}
+// Scoring lifts the soundtrack a level for a few bars.
+function hypeMusic(bars) { if (audioContext) music.hypeUntil = Math.max(music.hypeUntil, audioContext.currentTime + bars * 60 / 128 * 4); }
+function stopMusic() { if (music.timer) clearInterval(music.timer); music.timer = null; }
+function updateMusicButton() { const button = $("#musicToggle"); if (button) { button.textContent = musicEnabled ? "♪ Music on" : "♪ Music off"; button.classList.toggle("muted", !musicEnabled); } }
+function setMusicEnabled(enabled) {
+  musicEnabled = enabled; localStorage.setItem("tr-music", String(enabled));
+  $("#musicSetting").checked = enabled; updateMusicButton();
+  if (enabled) { enableAudio(); startMusic(); } else stopMusic();
+  updateSoundHint();
+}
+
+// Bigger captures get bigger sounds; consecutive captures without being cut climb in pitch.
+function playCaptureSound(tier, combo) {
+  if (!audioContext || !masterGain || soundVolume <= 0) return;
+  const lift = 2 ** (Math.min(Math.max(combo - 1, 0), 7) / 12), at = audioContext.currentTime;
+  if (tier === 0) return;
+  const scale = [523.25, 659.25, 783.99, 1046.5, 1318.51].map((freq) => freq * lift);
+  if (tier === 1) return playNotes(scale.slice(0, 3), .07, "triangle", .13);
+  noiseVoice(masterGain, at, { filter: "bandpass", freq: 600, toFreq: 5000, q: 1.2, level: .12, attack: .12, decay: .2 });
+  if (tier === 2) {
+    playNotes(scale.slice(0, 4), .06, "square", .07);
+    for (const freq of scale.slice(0, 3)) voice(masterGain, at + .26, { freq, type: "triangle", level: .07, decay: .6 });
+    return;
+  }
+  voice(masterGain, at, { freq: 120, toFreq: 38, level: .35, decay: .7 });
+  noiseVoice(masterGain, at + .05, { freq: 4000, level: .16, decay: 1.3 });
+  playNotes(scale, .075, "sawtooth", .06);
+  for (const freq of scale.slice(0, 3)) voice(masterGain, at + .4, { freq: freq * 2, type: "triangle", level: .06, decay: .9 });
+  [2093, 2637.02, 3135.96, 4186.01].forEach((freq, i) => voice(masterGain, at + .45 + i * .05, { freq: freq * lift, type: "sine", level: .04, decay: .35 }));
+}
+// Points tick up like a coin counter through the soundtrack's current chord, then land on a ka-ching.
+// Each combo step adds another sparkle on top of the ka-ching.
+function playPointsSound(points, { delay = 0, quiet = false, combo = 1 } = {}) {
+  if (!audioContext || !masterGain || soundVolume <= 0 || points <= 0) return;
+  const chord = MUSIC_CHORDS[Math.floor(music.step / 16)] || MUSIC_CHORDS[0], start = audioContext.currentTime + delay;
+  const ticks = quiet ? Math.min(3, points) : Math.min(16, Math.max(3, Math.round(points / 2)));
+  const gap = Math.max(.024, Math.min(.05, .45 / ticks)), span = Math.min(11, ticks - 1);
+  for (let i = 0; i < ticks; i++) {
+    const note = ticks > 1 ? Math.round(i * span / (ticks - 1)) : 0;
+    voice(masterGain, start + i * gap, { freq: chord.arp[note % 4] * 2 ** (Math.floor(note / 4) - 1), type: "square", level: quiet ? .022 : .05, decay: .06, lowpass: 5000 });
+  }
+  if (quiet) return;
+  const at = start + ticks * gap;
+  voice(masterGain, at, { freq: 987.77, type: "square", level: .07, decay: .07, lowpass: 6000 });
+  voice(masterGain, at + .07, { freq: 1318.51, type: "square", level: .07, decay: .38, lowpass: 6000 });
+  for (let i = 0; i < Math.min(Math.max(combo, 1), 5); i++) voice(masterGain, at + .1 + i * .045, { freq: [2637.02, 3135.96, 3520, 4186.01, 5274.04][i], type: "sine", level: .035, decay: .25 });
+}
+function playCrownSound(mine) {
+  if (!audioContext || !masterGain || soundVolume <= 0) return;
+  const at = audioContext.currentTime;
+  if (!mine) { voice(masterGain, at, { freq: 196, toFreq: 147, type: "triangle", level: .1, decay: .35 }); return; }
+  voice(masterGain, at, { freq: 523.25, type: "triangle", level: .12, decay: .9 });
+  [1046.5, 1318.51, 1567.98, 2093].forEach((freq, i) => voice(masterGain, at + .05 + i * .07, { freq, type: "sine", level: .07, decay: 1.1 }));
+  playPointsSound(4, { delay: .35 });
+}
+function playLeadSound(gained) {
+  if (!audioContext || !masterGain || soundVolume <= 0) return;
+  const at = audioContext.currentTime + .4;
+  if (!gained) { [392, 329.63].forEach((freq, i) => voice(masterGain, at + i * .14, { freq, type: "triangle", level: .08, decay: .3 })); return; }
+  noiseVoice(masterGain, at, { filter: "bandpass", freq: 700, toFreq: 7000, q: 1.4, level: .1, attack: .22, decay: .12 });
+  [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => voice(masterGain, at + .2 + i * .055, { freq, type: "square", level: .06, decay: .14, lowpass: 4000 }));
+  for (const freq of [523.25, 659.25, 783.99]) voice(masterGain, at + .44, { freq: freq * 2, type: "sawtooth", level: .045, decay: .7, lowpass: 3000 });
+}
+function playMilestoneSound() {
+  if (!audioContext || !masterGain || soundVolume <= 0) return;
+  const at = audioContext.currentTime + .7, chord = MUSIC_CHORDS[Math.floor(music.step / 16)] || MUSIC_CHORDS[0];
+  for (const [i, freq] of chord.pad.entries()) {
+    voice(masterGain, at, { freq: freq * 2, type: "sawtooth", level: .06, decay: .5, lowpass: 2600, detune: (i - 1) * 8 });
+    voice(masterGain, at + .16, { freq: freq * 2, type: "sawtooth", level: .06, decay: .9, lowpass: 3200, detune: (i - 1) * 8 });
+  }
+  voice(masterGain, at + .16, { freq: chord.arp[3] * 2, type: "sine", level: .05, decay: 1.2 });
+}
 $("#settingsButton").addEventListener("click", () => settingsDialog.showModal());
 $("#volumeSetting").addEventListener("input", (event) => {
   soundVolume = Number(event.target.value) / 100; localStorage.setItem("tr-sound-volume", String(event.target.value));
   if (masterGain) masterGain.gain.setTargetAtTime(soundVolume, audioContext.currentTime, .025);
+  updateSoundHint();
 });
-$("#musicSetting").addEventListener("change", (event) => {
-  musicEnabled = event.target.checked; localStorage.setItem("tr-music", String(musicEnabled));
-  if (musicEnabled) { enableAudio(); startMusic(); } else stopMusic();
-});
+$("#musicSetting").addEventListener("change", (event) => setMusicEnabled(event.target.checked));
+$("#musicToggle").addEventListener("click", (event) => { setMusicEnabled(!musicEnabled); event.currentTarget.blur(); });
+updateMusicButton();
+// Start straight away when the browser allows it (returning visitors often get autoplay); otherwise the first interaction does.
+enableAudio();
+$("#soundHint").addEventListener("click", unlockAudio);
 $("#effectsSetting").addEventListener("change", (event) => {
   visualEffectsEnabled = event.target.checked; localStorage.setItem("tr-visual-effects", String(visualEffectsEnabled));
   document.documentElement.classList.toggle("reduced-motion", !visualEffectsEnabled);
@@ -109,7 +301,7 @@ function handleMessage(message) {
   if (message.type === "match-start") {
     matchStarted = true; opponentLeft = false; lobby.classList.add("hidden"); gameView.classList.remove("hidden");
     $("#resultOverlay").classList.add("hidden"); $("#rematchButton").disabled = false; $("#rematchButton").textContent = "Rematch";
-    resetMatchFx(); previousTerritory = null; previousEffects.clear(); finalReplayDone = false; clearTimeout(finalReplayTimer); activeReplay = null; dailyReplay = null; $("#replayOverlay").classList.add("hidden"); $("#skipReplay").textContent = "Skip"; $("#matchMode").textContent = message.mode === "daily" ? "DAILY CHALLENGE" : `1V1 ARENA · ${String(message.difficulty || "normal").toUpperCase()}`; startMusic();
+    resetMatchFx(); previousTerritory = null; previousEffects.clear(); finalReplayDone = false; clearTimeout(finalReplayTimer); activeReplay = null; dailyReplay = null; $("#replayOverlay").classList.add("hidden"); $("#skipReplay").textContent = "Skip"; $("#matchMode").textContent = message.mode === "daily" ? "DAILY CHALLENGE" : `1V1 ARENA · ${String(message.difficulty || "normal").toUpperCase()}`; stopMusic(); startMusic();
   }
   if (message.type === "state") { state = message; updateTargets(); if (message.status === "finished" || message.finished || message.status === "disconnected") showResult(message); }
   if (message.type === "rematch-pending") {
@@ -210,7 +402,7 @@ function startDailyReplay(message) {
   state = { status: "replay", map: replay.map, players, powerUps: [], theme: replay.theme, crown: null, remainingMs: 180_000, effects: [] };
   const paintable = replay.map.width * replay.map.height - replay.map.walls.flat().filter(Boolean).length;
   for (const player of players) player.territoryPercent = paintable ? player.territory.size / paintable * 100 : 0;
-  targets.clear(); renderPositions.clear();
+  targets.clear(); renderPositions.clear(); positionBuffers.clear();
   players.forEach((p) => setTarget(p.id, p.x, p.y, true));
   $("#lobby").classList.add("hidden"); gameView.classList.remove("hidden");
   $("#resultOverlay").classList.add("hidden"); $("#replayTitle").textContent = `TOP DAILY RUN · ${isolate(message.entry.name)} · ${message.entry.score} PTS`;
@@ -250,7 +442,7 @@ function advanceDailyReplay() {
 }
 
 function exitDailyReplay() {
-  dailyReplay = null; state = null; targets.clear(); renderPositions.clear();
+  dailyReplay = null; state = null; targets.clear(); renderPositions.clear(); positionBuffers.clear();
   $("#replayOverlay").classList.add("hidden"); $("#skipReplay").textContent = "Skip"; $("#matchMode").textContent = "1V1 ARENA";
   gameView.classList.add("hidden"); lobby.classList.remove("hidden"); send("daily-leaderboard-request");
 }
@@ -329,17 +521,17 @@ roomCodeInput.addEventListener("keydown", (event) => { if (event.key === "Enter"
 function updateTargets() {
   if (!state?.players) return;
   trackTerritoryChanges();
-  noteSnapshotArrival();
+  noteSnapshotArrival(state.serverNow);
   state.players.forEach((player, index) => {
     setTarget(player.id, player.x, player.y);
     const echoId = `echo:${player.id}`;
     if (player.echo) setTarget(echoId, player.echo.x, player.echo.y);
-    else { targets.delete(echoId); renderPositions.delete(echoId); facing.delete(echoId); }
+    else { targets.delete(echoId); renderPositions.delete(echoId); facing.delete(echoId); positionBuffers.delete(echoId); }
     const card = $(`#score${index}`);
     if (card) {
       card.style.setProperty("--player-color", player.color);
       card.querySelector(".score-name").textContent = player.name;
-      card.querySelector(".score-value").textContent = `${player.territoryPercent.toFixed(1)}%`;
+      setScoreValue(card.querySelector(".score-value"), index, player.territoryPercent);
       card.querySelector(".score-info small").textContent = player.id === localPlayerId ? "YOU" : "OPPONENT";
       card.querySelector(".score-crown").textContent = `♛ ${player.stats?.crownPoints || 0}`;
     }
@@ -348,6 +540,7 @@ function updateTargets() {
   const countdown = Math.ceil((state.countdownMs || 0) / 1000);
   updateCountdown(countdown);
   updateFinalStretch(countdown);
+  trackScoreMoments(countdown);
   $("#arenaTheme").textContent = (state.theme?.name || "Neon Circuit").toUpperCase();
   document.documentElement.style.setProperty("--arena-accent", state.theme?.accent || "#57e389");
   const crownStatus = $("#crownStatus"), crown = state.crown;
@@ -370,6 +563,7 @@ function updateTargets() {
       // Echoes claim often, so they get a quiet popup instead of a toast and sound.
       const claimer = state.players.find((player) => player.id === effect.playerId), pos = renderPositions.get(`echo:${effect.playerId}`);
       if (claimer && pos && effect.cells) addPopup(pos.x, pos.y - 22, `ECHO +${effect.cells}${effect.breached ? " BREACH" : ""}`, claimer.color, 12);
+      if (effect.playerId === localPlayerId && effect.cells) { playPointsSound(effect.cells, { quiet: true }); bumpScore(); }
       continue;
     }
     if (effect.type === "echo-spawn") {
@@ -393,14 +587,22 @@ function updateTargets() {
         addPopup((hx + .5) * size, (hy + .5) * size - 12, "ECHO BROKEN", effect.color || "#fff", 15);
       }
     }
-    if (effect.type === "claim") { const breach = effect.breached ? ` · BREACH +${effect.breached}` : ""; showToast(effect.playerId === localPlayerId ? `Territory claimed · +${effect.cells} cells${breach}` : `Opponent claimed territory${breach}`, "claim"); playSound("claim");
+    if (effect.type === "claim") {
+      const mine = effect.playerId === localPlayerId, tier = effect.bonus ? 0 : captureTier(effect.cells);
+      const breach = effect.breached ? ` · BREACH +${effect.breached}` : "";
+      if (mine && effect.cells) captureCombo++;
+      const comboText = mine && captureCombo >= 2 ? ` · COMBO ×${captureCombo}` : "";
+      showToast(mine ? `${CAPTURE_TIERS[tier].toast}+${effect.cells} cells${breach}${comboText}` : `Opponent claimed territory${breach}`, "claim");
+      if (mine && effect.cells) {
+        playCaptureSound(tier, captureCombo);
+        playPointsSound(effect.cells, { delay: [0, .2, .3, .45][tier], combo: captureCombo });
+        hypeMusic(tier + 1); bumpScore();
+      } else playSound("claim");
       const claimer = state.players.find((player) => player.id === effect.playerId);
-      if (claimer) setMood(claimer.id, "happy", 1100);
+      if (claimer) setMood(claimer.id, "happy", tier >= 3 && mine ? 2200 : 1100);
       if (claimer && effect.cells) {
-        const pos = renderPositions.get(claimer.id) || claimer;
-        addPopup(pos.x, pos.y - 22, `+${effect.cells}${effect.bonus ? " BONUS" : ""}`, claimer.color, 14 + Math.min(14, effect.cells / 5));
-        if (effect.breached) addPopup(pos.x, pos.y - 46, "BREACH!", "#ff83ce", 15);
-        addShake(effect.playerId === localPlayerId ? Math.min(7, 1.5 + effect.cells / 12) : 1.5, 260);
+        const region = state.effects.find((item) => item.type === "capture-replay" && item.playerId === effect.playerId && !item.echo);
+        celebrateCapture(claimer, effect, tier, region, mine);
       }
     }
     if (effect.type === "crown-active") { showToast("THE CROWN IS LIVE · claim the gold beacon", "power"); playSound("power"); }
@@ -409,10 +611,13 @@ function updateTargets() {
     if (effect.type === "crown-control") showToast(effect.playerId === localPlayerId ? "CROWN CLAIMED · hold for points" : "Rival claimed the Crown", "power");
     if (effect.type === "crown-point") {
       showToast(`${effect.playerId === localPlayerId ? "Crown secured" : "Rival scored"} · ${effect.points} point${effect.points === 1 ? "" : "s"}`, "power");
+      playCrownSound(effect.playerId === localPlayerId);
+      if (effect.playerId === localPlayerId) { hypeMusic(2); bumpScore(); }
       if (state.crown?.cell) { const size = state.map.cellSize; addPopup((state.crown.cell.x + .5) * size, (state.crown.cell.y + .5) * size - 16, "+4 ♛", "#ffd45c", 18); addShake(2, 180); }
     }
     if (effect.type === "penalty") {
       const mine = effect.playerId === localPlayerId;
+      if (mine) captureCombo = 0;
       const cutText = effect.byEcho ? (mine ? "Cut by your rival's echo! Back to base" : "Your echo cut the rival!") : (mine ? "Trail cut! Territory lost — back to base" : "Opponent caught · territory lost");
       showToast(cutText, "penalty"); playSound("penalty");
       if (visualEffectsEnabled) { const frame = $(".board-frame"); frame.classList.remove("impact"); void frame.offsetWidth; frame.classList.add("impact"); setTimeout(() => frame.classList.remove("impact"), 300); }
@@ -440,8 +645,109 @@ function updateTargets() {
     }
   }
 }
+const CAPTURE_TIERS = [
+  { label: "", toast: "Territory claimed · " },
+  { label: "NICE!", toast: "NICE! · " },
+  { label: "BIG CLAIM!", toast: "BIG CLAIM! · " },
+  { label: "MASSIVE!", toast: "MASSIVE CAPTURE! · " },
+];
+function captureTier(cells = 0) { return cells >= 50 ? 3 : cells >= 25 ? 2 : cells >= 10 ? 1 : 0; }
+function celebrateCapture(player, effect, tier, region, mine) {
+  const size = state.map.cellSize, cells = (region?.cells || []).map(parseCell);
+  const pos = renderPositions.get(player.id) || player;
+  const centre = cells.length ? { x: (cells.reduce((sum, [x]) => sum + x, 0) / cells.length + .5) * size, y: (cells.reduce((sum, [, y]) => sum + y, 0) / cells.length + .5) * size } : pos;
+  const label = CAPTURE_TIERS[tier].label;
+  addPopup(pos.x, pos.y - 22, `${label ? `${label} ` : ""}+${effect.cells}${effect.bonus ? " BONUS" : ""}`, player.color, 14 + Math.min(14, effect.cells / 5) + (mine ? tier * 3 : 0));
+  if (effect.breached) { addPopup(pos.x, pos.y - 48, "BREACH!", "#ff83ce", 15 + tier * 2); spawnBurst(pos.x, pos.y, "#ff83ce", 10 + tier * 6); }
+  if (mine && captureCombo >= 2) addPopup(pos.x, pos.y - (effect.breached ? 72 : 48), `COMBO ×${captureCombo}`, "#ffd45c", 13 + Math.min(captureCombo, 6));
+  // The rival's captures stay modest so a losing player isn't buried in fireworks.
+  if (!mine) { addShake(1.5, 260); if (tier >= 2) addShockwave(centre.x, centre.y, player.color, 90); return; }
+  addShake(Math.min(14, 1.5 + effect.cells / 12 + tier * 2), 260 + tier * 120);
+  if (!visualEffectsEnabled || tier === 0) return;
+  addShockwave(centre.x, centre.y, player.color, 70 + tier * 60);
+  // Light the new tiles in a wave spreading out from the trail that closed the loop.
+  const now = performance.now(), maxDistance = Math.max(1, ...cells.map(([x, y]) => Math.hypot((x + .5) * size - pos.x, (y + .5) * size - pos.y)));
+  const waveCells = new Set(region?.cells || []);
+  claimFlashes = claimFlashes.filter((flash) => !(waveCells.has(`${flash.x},${flash.y}`) && flash.startedAt >= now - 100));
+  for (const [x, y] of cells) claimFlashes.push({ x, y, color: player.color, startedAt: now + Math.hypot((x + .5) * size - pos.x, (y + .5) * size - pos.y) / maxDistance * 260 });
+  claimFlashes = claimFlashes.slice(-320);
+  if (tier < 2) return;
+  addShockwave(centre.x, centre.y, "#ffffff", 50 + tier * 40, 120);
+  spawnConfetti(centre.x, centre.y, player.color, tier === 3 ? 90 : 45);
+  pulseBoard("big-capture", 700);
+  if (tier < 3) return;
+  screenFlash = { startedAt: now, color: "#ffffff" };
+  bigBanners = [{ text: `${label} +${effect.cells}`, color: player.color, startedAt: now }];
+  pulseBoard("capture-punch", 320);
+  const trail = (region?.trail || []).filter((_, index, all) => index % Math.max(1, Math.floor(all.length / 14)) === 0);
+  trail.forEach((packed) => { const [x, y] = parseCell(packed); spawnBurst((x + .5) * size, (y + .5) * size, player.color, 5); });
+  spawnConfetti(pos.x, pos.y, "#ffd45c", 30);
+}
+function addShockwave(x, y, color, radius, delay = 0) {
+  if (!visualEffectsEnabled) return;
+  shockwaves.push({ x, y, color, radius, startedAt: performance.now() + delay });
+  shockwaves = shockwaves.slice(-12);
+}
+function spawnConfetti(x, y, color, count) {
+  if (!visualEffectsEnabled) return;
+  const palette = [color, "#ffd45c", "#ffffff", "#ff83ce", "#7effd6"];
+  for (let i = 0; i < count; i++) {
+    const angle = -Math.PI / 2 + (Math.random() - .5) * Math.PI * 1.6, speed = 140 + Math.random() * 260;
+    particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, gravity: 520, spin: (Math.random() - .5) * 14, confetti: true, color: palette[i % palette.length], startedAt: performance.now(), life: 900 + Math.random() * 600 });
+  }
+  particles = particles.slice(-420);
+}
+function pulseBoard(className, ms) {
+  if (!visualEffectsEnabled) return;
+  const frame = $(".board-frame");
+  frame.style.setProperty("--capture-color", state?.players?.find((p) => p.id === localPlayerId)?.color || "#7effd6");
+  frame.classList.remove(className); void frame.offsetWidth; frame.classList.add(className);
+  setTimeout(() => frame.classList.remove(className), ms);
+}
+// Gains roll up on the scoreboard instead of jumping; losses snap down at once.
+const scoreRoll = new Map();
+let scoreRollFrame = 0, leadHolder = null, bestMilestone = null;
+function setScoreValue(el, index, value) {
+  const roll = scoreRoll.get(index);
+  if (!roll || value <= roll.shown || !visualEffectsEnabled) { scoreRoll.set(index, { shown: value, target: value, el }); el.textContent = `${value.toFixed(1)}%`; return; }
+  roll.target = value; roll.el = el;
+  if (!scoreRollFrame) scoreRollFrame = requestAnimationFrame(stepScoreRoll);
+}
+function stepScoreRoll() {
+  scoreRollFrame = 0; let moving = false;
+  for (const roll of scoreRoll.values()) {
+    if (roll.shown < roll.target) { roll.shown = Math.min(roll.target, roll.shown + Math.max(.1, (roll.target - roll.shown) * .1)); moving = true; }
+    roll.el.textContent = `${roll.shown.toFixed(1)}%`;
+  }
+  if (moving) scoreRollFrame = requestAnimationFrame(stepScoreRoll);
+}
+function bumpScore() {
+  const index = state?.players?.findIndex((player) => player.id === localPlayerId), el = $(`#score${index} .score-value`);
+  if (!el || !visualEffectsEnabled) return;
+  el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump");
+}
+// Taking the lead and every new 10% of the map get their own sting.
+function trackScoreMoments(countdown) {
+  const me = state.players.find((player) => player.id === localPlayerId), rival = state.players.find((player) => player.id !== localPlayerId);
+  if (!me || !rival || countdown > 0 || state.finished || state.status !== "playing" || dailyReplay) return;
+  const diff = me.territoryPercent - rival.territoryPercent, holder = diff > .05 ? "me" : diff < -.05 ? "rival" : leadHolder;
+  if (holder && holder !== leadHolder) {
+    if (holder === "me") { playLeadSound(true); addPopup(canvas.width / 2, 64, "YOU TAKE THE LEAD!", me.color, 26); hypeMusic(2); }
+    else if (leadHolder === "me") { playLeadSound(false); addPopup(canvas.width / 2, 64, "RIVAL TAKES THE LEAD", rival.color, 20); }
+  }
+  leadHolder = holder;
+  const milestone = Math.floor(me.territoryPercent / 10) * 10;
+  if (bestMilestone !== null && milestone > bestMilestone) {
+    playMilestoneSound(); hypeMusic(2);
+    addPopup(canvas.width / 2, 108, `${milestone}% OF THE MAP!`, "#ffd45c", 24);
+    addShockwave(canvas.width / 2, 108, "#ffd45c", 140, 600);
+  }
+  if (bestMilestone === null || milestone > bestMilestone) bestMilestone = milestone;
+}
 function resetMatchFx() {
+  leadHolder = null; bestMilestone = null; scoreRoll.clear();
   popups = []; motionTrails.clear(); facing.clear(); moods.clear(); lastCountdown = 0; goUntil = 0; lastTickSecond = null; finalPhase = false;
+  shockwaves = []; bigBanners = []; screenFlash = null; captureCombo = 0;
   finishBannerShown = false; finishBannerActive = false; clearTimeout(finishBannerTimer);
   $("#finishBanner").className = "finish-banner hidden";
   $(".timer-box").classList.remove("final-countdown"); $(".board-frame").classList.remove("final-countdown");
@@ -457,7 +763,7 @@ function updateCountdown(countdown) {
 }
 function updateFinalStretch(countdown) {
   const seconds = Math.ceil((state.remainingMs || 0) / 1000), live = countdown <= 0 && !state.finished && state.status === "playing";
-  if (live && seconds <= 30 && !finalPhase) { finalPhase = true; showToast("FINAL 30 SECONDS · make your move", "power"); stopMusic(); startMusic(); }
+  if (live && seconds <= 30 && !finalPhase) { finalPhase = true; showToast("FINAL 30 SECONDS · make your move", "power"); }
   const critical = live && seconds <= 10;
   $(".timer-box").classList.toggle("final-countdown", critical); $(".board-frame").classList.toggle("final-countdown", critical);
   if (critical && seconds !== lastTickSecond) { lastTickSecond = seconds; playSound("tick"); }
@@ -494,7 +800,7 @@ function spawnBurst(x, y, color, count) {
     const angle = Math.random() * Math.PI * 2, speed = 24 + Math.random() * 75;
     particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, color, startedAt: performance.now(), life: 430 + Math.random() * 250 });
   }
-  particles = particles.slice(-160);
+  particles = particles.slice(-420);
 }
 function powerName(type) { return ({ speed: "Speed Boost", shield: "Shield", freeze: "Trail-Freeze", bonus: "Territory Bonus", rewind: "Rewind", lock: "Echo Lock" })[type] || "Power-up"; }
 const POWER_COLORS = { speed: "#ffd45c", shield: "#70d8ff", freeze: "#9ba8ff", bonus: "#ff83ce", rewind: "#c9a8ff", lock: "#ff9f5c" };
@@ -560,7 +866,7 @@ function displayResult(message) {
   $("#rematchButton").disabled = unavailable || opponentLeft;
   if (opponentLeft) $("#rematchButton").textContent = "Rival left";
   $("#resultOverlay").classList.remove("hidden");
-  matchStarted = false; stopMusic();
+  matchStarted = false; stopMusic(); setTimeout(startMusic, 1500);
 }
 $("#skipReplay").addEventListener("click", () => { if (dailyReplay) return exitDailyReplay(); clearTimeout(finalReplayTimer); activeReplay = null; $("#replayOverlay").classList.add("hidden"); if (state) displayResult({ winnerId: state.winnerId, draw: state.draw, status: "finished" }); });
 function backToLobby() { send("leave-room"); location.reload(); }
@@ -1195,15 +1501,27 @@ function draw(time = 0) {
     const now = performance.now();
     claimFlashes = claimFlashes.filter((flash) => now - flash.startedAt < 650);
     for (const flash of claimFlashes) {
+      if (now < flash.startedAt) continue;
       const progress = Math.max(0, Math.min(1, (now - flash.startedAt) / 650));
       const px = (flash.x + .5) * cellSize, py = (flash.y + .5) * cellSize;
       ctx.beginPath(); ctx.arc(px, py, 4 + progress * 15, 0, Math.PI * 2); ctx.strokeStyle = colorAlpha(flash.color, (1 - progress) * .8); ctx.lineWidth = 2; ctx.stroke();
       ctx.fillStyle = colorAlpha(flash.color, (1 - progress) * .2); ctx.fillRect(px - cellSize / 2, py - cellSize / 2, cellSize, cellSize);
     }
+    shockwaves = shockwaves.filter((wave) => now - wave.startedAt < 700);
+    for (const wave of shockwaves) {
+      if (now < wave.startedAt) continue;
+      const progress = (now - wave.startedAt) / 700, eased = 1 - (1 - progress) ** 3;
+      ctx.save(); ctx.beginPath(); ctx.arc(wave.x, wave.y, 8 + eased * wave.radius, 0, Math.PI * 2);
+      ctx.strokeStyle = colorAlpha(wave.color, (1 - progress) * .85); ctx.lineWidth = 2 + (1 - progress) * 6; ctx.shadowColor = wave.color; ctx.shadowBlur = 18; ctx.stroke(); ctx.restore();
+    }
     particles = particles.filter((particle) => now - particle.startedAt < particle.life);
     for (const particle of particles) {
       const age = (now - particle.startedAt) / 1000, progress = (now - particle.startedAt) / particle.life;
-      ctx.globalAlpha = 1 - progress; ctx.beginPath(); ctx.arc(particle.x + particle.vx * age, particle.y + particle.vy * age, 1.5 + (1 - progress) * 2, 0, Math.PI * 2); ctx.fillStyle = particle.color; ctx.fill();
+      const px = particle.x + particle.vx * age, py = particle.y + particle.vy * age + .5 * (particle.gravity || 0) * age * age;
+      ctx.globalAlpha = 1 - progress; ctx.fillStyle = particle.color;
+      if (particle.confetti) {
+        ctx.save(); ctx.translate(px, py); ctx.rotate(particle.spin * age); ctx.fillRect(-3.5, -1.8, 7, 3.6 * Math.abs(Math.cos(particle.spin * age * .7)) + .6); ctx.restore();
+      } else { ctx.beginPath(); ctx.arc(px, py, 1.5 + (1 - progress) * 2, 0, Math.PI * 2); ctx.fill(); }
     }
     ctx.globalAlpha = 1;
     popups = popups.filter((popup) => now - popup.startedAt < 1000);
@@ -1215,6 +1533,22 @@ function draw(time = 0) {
       ctx.lineWidth = 4; ctx.lineJoin = "round"; ctx.strokeStyle = "#060b12"; ctx.strokeText(popup.text, 0, 0);
       ctx.shadowColor = popup.color; ctx.shadowBlur = 12; ctx.fillStyle = popup.color; ctx.fillText(popup.text, 0, 0);
       ctx.restore();
+    }
+    bigBanners = bigBanners.filter((banner) => now - banner.startedAt < 1400);
+    for (const banner of bigBanners) {
+      const progress = (now - banner.startedAt) / 1400, pop = progress < .12 ? .4 + progress / .12 * .8 : progress < .22 ? 1.2 - (progress - .12) / .1 * .2 : 1;
+      ctx.save(); ctx.globalAlpha = progress > .75 ? (1 - progress) / .25 : 1;
+      ctx.translate(canvas.width / 2, canvas.height / 2 - 20); ctx.rotate(-.05); ctx.scale(pop, pop);
+      ctx.font = `900 64px Inter, "Segoe UI", sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.lineWidth = 10; ctx.lineJoin = "round"; ctx.strokeStyle = "#060b12"; ctx.strokeText(banner.text, 0, 0);
+      ctx.shadowColor = banner.color; ctx.shadowBlur = 30; ctx.fillStyle = banner.color; ctx.fillText(banner.text, 0, 0);
+      ctx.shadowBlur = 0; ctx.fillStyle = "#ffffffcc"; ctx.font = `900 64px Inter, "Segoe UI", sans-serif`; ctx.globalAlpha *= .35; ctx.fillText(banner.text, 0, -3);
+      ctx.restore();
+    }
+    if (screenFlash) {
+      const progress = (now - screenFlash.startedAt) / 380;
+      if (progress >= 1) screenFlash = null;
+      else { ctx.fillStyle = colorAlpha(screenFlash.color, (1 - progress) * .45); ctx.fillRect(0, 0, canvas.width, canvas.height); }
     }
   }
   if (activeReplay) {
@@ -1275,28 +1609,45 @@ function drawEcho(player, time) {
   ctx.fillText("ECHO", pos.x, pos.y - 23);
   ctx.restore();
 }
-// Glide at a constant pace from where the player is drawn to the newest server position, spread over one
-// snapshot interval, so motion stays even instead of surging and pausing between 20 Hz updates.
-let snapshotInterval = 50, lastSnapshotAt = 0;
-function setTarget(id, x, y, instant = false) {
-  const now = performance.now(), rendered = renderPositions.get(id);
-  const from = !instant && rendered ? { x: rendered.x, y: rendered.y } : { x, y };
-  // Large jumps are respawns; snap instead of sliding across the maze.
-  if (Math.hypot(x - from.x, y - from.y) > 60) { from.x = x; from.y = y; motionTrails.delete(id); }
-  targets.set(id, { fromX: from.x, fromY: from.y, x, y, at: now });
-  if (!rendered) renderPositions.set(id, { x: from.x, y: from.y });
+// Characters are drawn slightly in the past, blended between the two server snapshots around that moment,
+// so a late or bunched-up packet never makes them stall and then jump.
+const INTERP_DELAY_MS = 75;
+const positionBuffers = new Map();
+let serverClockOffset = null;
+// Tracks the fastest-arriving snapshot, so samples are timed by when the server sent them rather than network jitter.
+function noteSnapshotArrival(serverNow) {
+  if (!Number.isFinite(serverNow)) return;
+  const offset = performance.now() - serverNow;
+  serverClockOffset = serverClockOffset === null ? offset : Math.min(offset, serverClockOffset + .5);
 }
-function noteSnapshotArrival() {
-  const now = performance.now();
-  if (lastSnapshotAt) snapshotInterval += (Math.min(120, Math.max(25, now - lastSnapshotAt)) - snapshotInterval) * .2;
-  lastSnapshotAt = now;
+function setTarget(id, x, y, instant = false) {
+  const timed = !instant && serverClockOffset !== null && Number.isFinite(state?.serverNow);
+  const at = timed ? state.serverNow + serverClockOffset : performance.now();
+  let buffer = positionBuffers.get(id) || [];
+  const last = buffer[buffer.length - 1];
+  // Large jumps are respawns; snap instead of sliding across the maze.
+  const jump = last && Math.hypot(x - last.x, y - last.y) > 60;
+  if (jump) motionTrails.delete(id);
+  if (!timed || jump) buffer = [];
+  else if (last && at <= last.at) buffer.pop();
+  buffer.push({ at, x, y });
+  if (buffer.length > 20) buffer.shift();
+  positionBuffers.set(id, buffer);
+  const previous = buffer[buffer.length - 2] || buffer[buffer.length - 1];
+  targets.set(id, { fromX: previous.x, fromY: previous.y, x, y });
 }
 function interpolate(id, x, y) {
-  const target = targets.get(id) || { fromX: x, fromY: y, x, y, at: 0 };
-  const rendered = renderPositions.get(id) || { x: target.x, y: target.y };
-  const progress = Math.min(1, (performance.now() - target.at) / snapshotInterval);
-  rendered.x = target.fromX + (target.x - target.fromX) * progress;
-  rendered.y = target.fromY + (target.y - target.fromY) * progress;
+  const buffer = positionBuffers.get(id), rendered = renderPositions.get(id) || { x, y };
+  if (buffer?.length) {
+    const renderAt = performance.now() - INTERP_DELAY_MS;
+    let next = buffer.findIndex((sample) => sample.at > renderAt);
+    if (next === -1) next = buffer.length;
+    if (next === 0 || next === buffer.length) { const sample = buffer[Math.min(next, buffer.length - 1)]; rendered.x = sample.x; rendered.y = sample.y; }
+    else {
+      const a = buffer[next - 1], b = buffer[next], t = (renderAt - a.at) / Math.max(1, b.at - a.at);
+      rendered.x = a.x + (b.x - a.x) * t; rendered.y = a.y + (b.y - a.y) * t;
+    }
+  } else { rendered.x = x; rendered.y = y; }
   renderPositions.set(id, rendered);
   return rendered;
 }

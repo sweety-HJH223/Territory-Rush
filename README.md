@@ -37,6 +37,10 @@ From **0:30**, each player gets an echo: a see-through copy that replays exactly
 
 So every move counts twice: once now, and again when your echo repeats it. The results screen and the shared result image show what your echo did: cells it claimed, rival cuts it made, and how many rival echoes you broke.
 
+### Big claims
+
+The bigger the area you close in one loop, the bigger the celebration: **NICE** at 10+ tiles, **BIG CLAIM** at 25+, and **MASSIVE** at 50+, with shockwaves, confetti, and a fanfare. Claiming loops one after another builds a combo, and each claim in a combo plays at a higher pitch. The combo resets when you get cut. Every point you earn ticks up on the scoreboard with a coin-counter sound, and taking the lead or reaching each new 10% of the map plays its own sting. The menus have their own bouncy track, and the arena switches to a driving dance beat that builds with the match: it adds layers at 0:30 and 1:30, surges for a few bars after you score, and speeds up in the final 10 seconds.
+
 ### The Crown
 
 The Crown activates with **1:30 remaining** and moves at **0:45**. It always appears on a tile the same walking distance from both bases, so neither player gets a head start. Stand on its tile for 5 seconds to earn a Crown point. Each Crown point adds **4 points** to your final score.

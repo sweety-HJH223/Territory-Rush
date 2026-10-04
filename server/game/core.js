@@ -8,7 +8,10 @@ export const GAME = Object.freeze({
   durationMs: 180_000,
   tickMs: 50,
   playerRadius: 7,
-  baseSpeed: 280,
+  baseSpeed: 230,
+  // From a standstill a player eases up to full speed over this long; turns keep their speed so
+  // cornering in the maze stays precise.
+  accelMs: 140,
   penaltyFraction: 0.12,
   maxCaptureFraction: 0.09,
   maxBreachCells: 6,
@@ -23,9 +26,9 @@ export const GAME = Object.freeze({
 });
 // Per-match rules; "normal" matches GAME so the Daily Challenge stays comparable.
 export const DIFFICULTIES = Object.freeze({
-  easy: { id: "easy", speed: 240, penaltyFraction: 0.08, maxBreachCells: 4 },
+  easy: { id: "easy", speed: 200, penaltyFraction: 0.08, maxBreachCells: 4 },
   normal: { id: "normal", speed: GAME.baseSpeed, penaltyFraction: GAME.penaltyFraction, maxBreachCells: GAME.maxBreachCells },
-  hard: { id: "hard", speed: 310, penaltyFraction: 0.18, maxBreachCells: 10 },
+  hard: { id: "hard", speed: 270, penaltyFraction: 0.18, maxBreachCells: 10 },
 });
 export const ARENA_THEMES = [
   { id: "neon", name: "Neon Circuit", accent: "#56edc0" },
@@ -295,10 +298,12 @@ function assistCorner(state, player, axis, blocked, solid) {
 function movePlayer(state, player, dt, now, hardCells) {
   const input = player.input;
   const dx = Number(input.right) - Number(input.left), dy = Number(input.down) - Number(input.up);
-  if (!dx && !dy) return;
+  if (!dx && !dy) { player.momentum = 0; return; }
   // A player already overlapping a tile that just hardened may walk out of it freely.
   const solid = hardCells?.size && !collidesWithWall(state, player.x, player.y, hardCells) ? hardCells : null;
-  const length = Math.hypot(dx, dy), speed = playerSpeed(player, now);
+  player.momentum = Math.min(1, (player.momentum || 0) + dt * 1000 / GAME.accelMs);
+  const ease = 0.4 + 0.6 * (1 - (1 - player.momentum) ** 2);
+  const length = Math.hypot(dx, dy), speed = playerSpeed(player, now) * ease;
   // Axis-separated collision allows sliding along walls.
   const blockedX = dx ? moveAxis(state, player, "x", dx / length * speed * dt, solid) : 0;
   const blockedY = dy ? moveAxis(state, player, "y", dy / length * speed * dt, solid) : 0;
@@ -382,7 +387,7 @@ function captureLoop(state, player, closingCell) {
     const item = { kind: "capture", playerId: player.id, name: player.name, color: player.color, trail: [...boundary.map(({ x, y }) => key(Math.floor(x), Math.floor(y)))], cells: [...capturedCells, ...breachCells.map(({ k }) => k)], score: claimed };
     const previous = state.highlights.find((entry) => entry.kind === "capture");
     if (!previous || claimed > previous.score) state.highlights = [...state.highlights.filter((entry) => entry.kind !== "capture"), item];
-    state.effects.push({ type: "capture-replay", ...item });
+    state.effects.push({ type: "capture-replay", ...item, echo: Boolean(player.isEcho) });
   }
 }
 
@@ -429,6 +434,7 @@ function penalize(state, owner, now, hitCell, byEcho = false) {
   owner.stats.trailCuts++;
   clearTrail(owner);
   owner.route = [];
+  owner.momentum = 0;
   const spawn = center(state, owner.base.x, owner.base.y);
   owner.x = spawn.x; owner.y = spawn.y;
   const effect = { type: "penalty", playerId: owner.id, at: now, trail: cutTrail, color: owner.color, hitCell, byEcho };
